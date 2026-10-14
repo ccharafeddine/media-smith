@@ -6,3 +6,4 @@ app/src-tauri/gen/
 app/src-tauri/binaries/
 *.log
 .DS_Store
+.whisper-build/

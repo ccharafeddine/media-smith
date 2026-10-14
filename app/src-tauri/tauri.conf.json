@@ -40,6 +40,16 @@
       "icons/128x128.png",
       "icons/icon.ico",
       "icons/icon.png"
+    ],
+    "externalBin": [
+      "binaries/ffmpeg",
+      "binaries/ffprobe",
+      "binaries/yt-dlp",
+      "binaries/whisper-cli"
+    ],
+    "resources": [
+      "resources/fonts/*",
+      "resources/Syne-OFL.txt"
     ]
   }
 }
