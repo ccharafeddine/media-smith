@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  addItem, appendClip, clipAt, deleteItem, duration, EditError, fromJson, moveItem, newProject, splitItem, toJson, trimItem,
+  addItem, appendClip, captions, setTexts, defaultStyle, clipAt, deleteItem, duration, EditError, fromJson, moveItem, newProject, splitItem, toJson, trimItem,
 } from "./model";
 
 function sample() {
@@ -73,5 +73,16 @@ describe("project model", () => {
     const p = fromJson(rust);
     const { id } = addItem(p, "t1", 5000, 1000, { type: "clip", source: "b.mp4", source_in_ms: 0, volume: 1 });
     expect(id).toBe("i4");
+  });
+
+  it("rewrites caption text without touching timing", () => {
+    let p = newProject();
+    const c = p.tracks.find((t) => t.kind === "caption")!.id;
+    const r1 = addItem(p, c, 2000, 1000, { type: "caption", text: "second", style: defaultStyle() });
+    const r2 = addItem(r1.project, c, 0, 1000, { type: "caption", text: "first", style: defaultStyle() });
+    p = r2.project;
+    expect(captions(p).map((i) => i.text)).toEqual(["first", "second"]);
+    const q = setTexts(p, { [r1.id]: "SECOND!" });
+    expect(captions(q).map((i) => [i.text, i.start_ms, i.duration_ms])).toEqual([["first", 0, 1000], ["SECOND!", 2000, 1000]]);
   });
 });

@@ -59,6 +59,7 @@ export function createEditor(initial: M.Project = M.newProject()) {
       if (!cap) return false;
       return apply((p) => M.addItem(p, cap.id, start_ms, duration_ms, { type: "caption", text, style: M.defaultStyle() }).project);
     },
+    setTexts: (texts: Record<string, string>) => apply((p) => M.setTexts(p, texts)),
     move: (id: string, start: number, track?: string) => apply((p) => M.moveItem(p, id, start, track)),
     trim: (id: string, start: number, dur: number) => apply((p) => M.trimItem(p, id, start, dur)),
     splitAtPlayhead() {

@@ -1,4 +1,6 @@
-import { For } from "solid-js";
+import { createResource, For, Show } from "solid-js";
+import type { Platform } from "@mediasmith/platform";
+import { snap, snapMove, snapTargets, snapThresholdMs } from "../store/snap";
 import { formatTime, timeToX } from "@mediasmith/ui";
 import type { Editor } from "../store/store";
 import type { Item } from "../store/model";
@@ -12,7 +14,25 @@ function label(it: Item): string {
 
 /** Real timeline: click to seek, drag a block to move, drag its edges to
  *  trim. Edits commit on pointer-up through the store (invalid ones bounce). */
-export function Timeline(props: { editor: Editor; pxPerSec: number }) {
+const stripCache = new Map<string, Promise<string | null>>();
+
+/** ClipSmith-style filmstrip behind a video clip (desktop only). */
+function Filmstrip(props: { platform: Platform; item: Item; pxPerSec: number }) {
+  const key = () => {
+    const it = props.item;
+    if (it.type !== "clip") return null;
+    const count = Math.max(1, Math.min(40, Math.round(timeToX(it.duration_ms, props.pxPerSec) / 46)));
+    return { source: it.source, in: it.source_in_ms, dur: it.duration_ms, count };
+  };
+  const [src] = createResource(key, (k) => {
+    const id = `${k.source}|${k.in}|${k.dur}|${k.count}`;
+    if (!stripCache.has(id)) stripCache.set(id, props.platform.filmstrip(k.source, k.in, k.dur, k.count).catch(() => null));
+    return stripCache.get(id)!;
+  });
+  return <Show when={src()}>{(u) => <img class="strip" src={u()} alt="" draggable={false} />}</Show>;
+}
+
+export function Timeline(props: { editor: Editor; pxPerSec: number; platform: Platform }) {
   const e = props.editor;
   const xToMs = (x: number) => Math.max(0, (x / props.pxPerSec) * 1000);
   const seconds = () => Math.max(10, Math.ceil(e.duration() / 1000) + 5);
@@ -27,25 +47,33 @@ export function Timeline(props: { editor: Editor; pxPerSec: number }) {
     e.select(it.id);
     const el = (ev.currentTarget as HTMLElement).closest(".item") as HTMLElement;
     const x0 = ev.clientX;
-    const startPx = timeToX(it.start_ms, props.pxPerSec);
-    const widthPx = timeToX(it.duration_ms, props.pxPerSec);
+    const targets = snapTargets(e.project(), e.playhead(), it.id);
+    const thr = snapThresholdMs(props.pxPerSec);
+    const end = it.start_ms + it.duration_ms;
+    /** Snapped [start, duration] for a pointer delta. */
+    const geometry = (dx: number): [number, number] => {
+      const dms = (dx / props.pxPerSec) * 1000;
+      if (mode === "move") return [snapMove(Math.max(0, it.start_ms + dms), it.duration_ms, targets, thr), it.duration_ms];
+      if (mode === "left") { const s0 = Math.min(end - 50, Math.max(0, snap(it.start_ms + dms, targets, thr))); return [s0, end - s0]; }
+      return [it.start_ms, Math.max(50, snap(end + dms, targets, thr) - it.start_ms)];
+    };
     const onMove = (m: PointerEvent) => {
-      const dx = m.clientX - x0;
-      if (mode === "move") el.style.left = `${Math.max(0, startPx + dx)}px`;
-      if (mode === "left") { el.style.left = `${startPx + dx}px`; el.style.width = `${Math.max(4, widthPx - dx)}px`; }
-      if (mode === "right") el.style.width = `${Math.max(4, widthPx + dx)}px`;
+      const [s0, d0] = geometry(m.clientX - x0);
+      el.style.left = `${timeToX(s0, props.pxPerSec)}px`;
+      el.style.width = `${timeToX(d0, props.pxPerSec)}px`;
     };
     const onUp = (u: PointerEvent) => {
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
-      const dms = ((u.clientX - x0) / props.pxPerSec) * 1000;
-      if (Math.abs(u.clientX - x0) < 2) return;
-      if (mode === "move") e.move(it.id, it.start_ms + dms);
-      if (mode === "left") e.trim(it.id, it.start_ms + dms, it.duration_ms - dms);
-      if (mode === "right") e.trim(it.id, it.start_ms, it.duration_ms + dms);
+      if (Math.abs(u.clientX - x0) >= 2) {
+        const [s0, d0] = geometry(u.clientX - x0);
+        if (mode === "move") e.move(it.id, s0);
+        else e.trim(it.id, s0, d0);
+      }
       // Re-render from the store either way (snaps back a rejected edit).
-      el.style.left = `${timeToX(e.project().tracks.flatMap((t) => t.items).find((x) => x.id === it.id)?.start_ms ?? it.start_ms, props.pxPerSec)}px`;
-      el.style.width = "";
+      const now = e.project().tracks.flatMap((t) => t.items).find((x) => x.id === it.id) ?? it;
+      el.style.left = `${timeToX(now.start_ms, props.pxPerSec)}px`;
+      el.style.width = `${timeToX(now.duration_ms, props.pxPerSec)}px`;
     };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
@@ -66,6 +94,7 @@ export function Timeline(props: { editor: Editor; pxPerSec: number }) {
               <div class={`item ${e.selected() === it.id ? "sel" : ""}`} data-id={it.id}
                 style={{ left: `${timeToX(it.start_ms, props.pxPerSec)}px`, width: `${timeToX(it.duration_ms, props.pxPerSec)}px` }}
                 onPointerDown={(ev) => drag(ev, it, "move")}>
+                <Show when={t.kind === "video"}><Filmstrip platform={props.platform} item={it} pxPerSec={props.pxPerSec} /></Show>
                 <i class="grip l" onPointerDown={(ev) => drag(ev, it, "left")} />
                 <span>{label(it)}</span>
                 <i class="grip r" onPointerDown={(ev) => drag(ev, it, "right")} />

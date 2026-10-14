@@ -6,6 +6,7 @@ import { findItem, fromJson, toJson } from "./store/model";
 import { Timeline } from "./components/Timeline";
 import { Player } from "./components/Player";
 import { Settings } from "./components/Settings";
+import { CaptionsPanel } from "./components/CaptionsPanel";
 
 const ICONS: Record<Tool, string> = { Edit: "✂", Clip: "▭", GIF: "◎", Captions: "CC", Design: "◆", Import: "⇣", Settings: "⚙" };
 
@@ -16,6 +17,7 @@ export default function App() {
   const [preset, setPreset] = createSignal<ExportPreset>(platform.caps.exportPresets[0]);
   const [busy, setBusy] = createSignal<string | null>(null);
   const [zoom, setZoom] = createSignal(60);
+  const [progress, setProgress] = createSignal<number | null>(null);
   const aspect = () => { const p = PRESETS.find((x) => x.id === preset())!; return `${p.w} / ${p.h}`; };
   const selectedItem = () => { const id = editor.selected(); return id ? findItem(editor.project(), id) : undefined; };
 
@@ -48,7 +50,14 @@ export default function App() {
     editor.load(p);
     return p.name;
   });
-  const exportNow = () => run("Exported", () => platform.exportProject(toJson(editor.project()), preset()));
+  const exportNow = () => run("Exported", async () => {
+    setProgress(0);
+    try {
+      return await platform.exportProject(toJson(editor.project()), preset(), (r) => setProgress(r));
+    } finally {
+      setProgress(null);
+    }
+  });
 
   function onKey(ev: KeyboardEvent) {
     if ((ev.target as HTMLElement).tagName === "INPUT") return;
@@ -78,7 +87,15 @@ export default function App() {
           )}</For>
         </div>
         <span class={`badge ${platform.kind}`}>{platform.kind}</span>
-        <button class="export" disabled={!!busy() || editor.duration() === 0} onClick={exportNow}>{busy() === "Exported" ? "Exporting…" : "Export"}</button>
+        <Show when={progress() !== null} fallback={
+          <button class="export" disabled={!!busy() || editor.duration() === 0} onClick={exportNow}>Export</button>
+        }>
+          <div class="progress">
+            <div class="bar"><i style={{ width: `${Math.round((progress() ?? 0) * 100)}%` }} /></div>
+            <span class="tc">{Math.round((progress() ?? 0) * 100)}%</span>
+            <button class="chip" onClick={() => void platform.cancelExport()}>Cancel</button>
+          </div>
+        </Show>
       </header>
 
       <nav class="ms-tools">
@@ -94,8 +111,9 @@ export default function App() {
       <aside class="ms-panel">
         <h3>{tool()}</h3>
         <Show when={editor.message()}><p class="note">{editor.message()}</p></Show>
-        <Show when={tool() === "Settings"} fallback={
-          <>
+        <Show when={tool() === "Captions"}><CaptionsPanel editor={editor} platform={platform} /></Show>
+        <Show when={tool() !== "Captions" && tool() === "Settings"}><Settings platform={platform} /></Show>
+        <Show when={tool() !== "Captions" && tool() !== "Settings"}>
             <button class="btn2" onClick={importMedia}>⇣ Import video</button>
             <Show when={selectedItem()} fallback={<p class="dim">Select a clip on the timeline.</p>}>
               {(it) => (
@@ -113,16 +131,12 @@ export default function App() {
               <button class="btn2" onClick={() => editor.deleteSelected()} title="Delete">Delete</button>
               <button class="btn2" onClick={() => editor.undo()} title="Ctrl+Z">Undo</button>
             </div>
-            <button class="btn2" onClick={() => editor.addCaption("New caption", editor.playhead())}>+ Caption at playhead</button>
             <label>Zoom<input type="range" min="20" max="200" value={zoom()} onInput={(ev) => setZoom(Number(ev.currentTarget.value))} /></label>
             <Show when={!platform.caps.urlImport}><p class="dim">Link import and MP4 export need the desktop app.</p></Show>
-          </>
-        }>
-          <Settings platform={platform} />
         </Show>
       </aside>
 
-      <Timeline editor={editor} pxPerSec={zoom()} />
+      <Timeline editor={editor} pxPerSec={zoom()} platform={platform} />
     </div>
   );
 }

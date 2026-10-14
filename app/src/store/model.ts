@@ -175,3 +175,19 @@ export function fromJson(s: string): Project {
   validate(p);
   return p;
 }
+
+/** Replace the text of caption items by id (timing untouched). */
+export function setTexts(p: Project, texts: Record<string, string>): Project {
+  return transact(p, (q) => {
+    for (const t of q.tracks) for (const i of t.items) if (i.id in texts && (i.type === "caption" || i.type === "text")) i.text = texts[i.id];
+  });
+}
+
+/** Caption items in time order. */
+export function captions(p: Project): (Item & { type: "caption" })[] {
+  return p.tracks
+    .filter((t) => t.kind === "caption")
+    .flatMap((t) => t.items)
+    .filter((i): i is Item & { type: "caption" } => i.type === "caption")
+    .sort((a, b) => a.start_ms - b.start_ms);
+}
