@@ -136,6 +136,9 @@ async fn export_project(
         let tmp = std::env::temp_dir().join(format!("mediasmith-export-{}", std::process::id()));
         std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
         let mut opts = ExportOptions::default();
+        if let Some(fonts) = fonts_dir(&app) {
+            opts.fontsdir = Some(escape_filter_path(&fonts.to_string_lossy()));
+        }
         if ms_media::ass::has_overlays(&project) {
             let ass = tmp.join("overlays.ass");
             std::fs::write(&ass, ms_media::ass::build_ass(&project, preset.size()))
@@ -199,6 +202,185 @@ async fn filmstrip(
         );
         let png = run_tool_bytes(&tool("ffmpeg"), &args).map_err(|e| e.to_string())?;
         Ok(ms_media::filmstrip::png_data_uri(&png))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Bundled fonts (Syne) for libass: the resource dir when installed, the
+/// source tree in dev.
+fn fonts_dir(app: &tauri::AppHandle) -> Option<PathBuf> {
+    let installed = app
+        .path()
+        .resource_dir()
+        .ok()
+        .map(|d| d.join("resources").join("fonts"));
+    let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("resources")
+        .join("fonts");
+    installed
+        .into_iter()
+        .chain(std::iter::once(dev))
+        .find(|d| d.join("Syne.ttf").is_file())
+}
+
+// ---- Auto-captions (whisper) -------------------------------------------------
+
+#[derive(Default)]
+struct CaptionState {
+    model_cancel: Arc<AtomicBool>,
+    transcribe_cancel: Arc<AtomicBool>,
+}
+
+fn models_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let d = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("models");
+    std::fs::create_dir_all(&d).map_err(|e| e.to_string())?;
+    Ok(d)
+}
+
+#[derive(Clone, serde::Serialize)]
+struct ModelProgress {
+    file: String,
+    received: u64,
+    total: Option<u64>,
+}
+
+#[tauri::command]
+fn caption_models(app: tauri::AppHandle) -> Result<Vec<ms_captions::models::ModelInfo>, String> {
+    Ok(ms_captions::models::list(&models_dir(&app)?))
+}
+
+#[tauri::command]
+async fn download_caption_model(app: tauri::AppHandle, file: String) -> Result<(), String> {
+    let cancel = app.state::<CaptionState>().model_cancel.clone();
+    cancel.store(false, Ordering::Relaxed);
+    tauri::async_runtime::spawn_blocking(move || {
+        let dir = models_dir(&app)?;
+        ms_captions::models::download(&dir, &file, &cancel, |received, total| {
+            let _ = app.emit(
+                "model-download-progress",
+                ModelProgress {
+                    file: file.clone(),
+                    received,
+                    total,
+                },
+            );
+        })
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+fn cancel_caption_model(state: tauri::State<'_, CaptionState>) {
+    state.model_cancel.store(true, Ordering::Relaxed);
+}
+
+#[tauri::command]
+fn delete_caption_model(app: tauri::AppHandle, file: String) -> Result<(), String> {
+    ms_captions::models::delete(&models_dir(&app)?, &file).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn cancel_auto_caption(state: tauri::State<'_, CaptionState>) {
+    state.transcribe_cancel.store(true, Ordering::Relaxed);
+}
+
+/// Transcribe every main-track clip with whisper and replace the caption
+/// track (created if missing) with the result. Emits `caption-progress`
+/// (0..1 over all clips). Returns the updated project JSON.
+#[tauri::command]
+async fn auto_caption(
+    app: tauri::AppHandle,
+    json: String,
+    model: Option<String>,
+    language: Option<String>,
+) -> Result<String, String> {
+    let cancel = app.state::<CaptionState>().transcribe_cancel.clone();
+    cancel.store(false, Ordering::Relaxed);
+    tauri::async_runtime::spawn_blocking(move || {
+        use ms_captions::{models, place, whisper};
+        let mut project = Project::from_json(&json).map_err(|e| e.to_string())?;
+        let file = model.unwrap_or_else(|| models::DEFAULT_MODEL.into());
+        let model_path = models::resolve(&models_dir(&app)?, &file)
+            .map_err(|_| format!("MODEL_NOT_FOUND|{file}"))?;
+        let clips: Vec<(u64, u64, String, u64)> = project
+            .main_video_clips()
+            .iter()
+            .filter_map(|it| match &it.kind {
+                ItemKind::Clip {
+                    source,
+                    source_in_ms,
+                    ..
+                } => Some((it.start_ms, it.duration_ms, source.clone(), *source_in_ms)),
+                _ => None,
+            })
+            .collect();
+        if clips.is_empty() {
+            return Err("Add a clip to the main video track first.".into());
+        }
+        let tmp = std::env::temp_dir().join(format!("mediasmith-captions-{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
+        let opts = whisper::Options {
+            language,
+            words: true,
+            ..Default::default()
+        };
+        let n = clips.len() as f64;
+        let mut cues = Vec::new();
+        let result = (|| {
+            for (k, (start, dur, source, src_in)) in clips.iter().enumerate() {
+                let meta = probe(source)?;
+                if !meta.has_audio {
+                    continue;
+                }
+                ms_media::runner::reject_flaglike(source).map_err(|e| e.to_string())?;
+                let wav = tmp.join(format!("clip{k}.wav"));
+                ms_media::runner::run_ffmpeg(
+                    &tool("ffmpeg"),
+                    &whisper::extract_wav_args(source, *src_in, *dur, &wav),
+                )
+                .map_err(|e| e.to_string())?;
+                let segs = whisper::transcribe(
+                    &tool("whisper-cli"),
+                    &model_path,
+                    &wav,
+                    &opts,
+                    &cancel,
+                    |p| {
+                        let _ = app.emit(
+                            "caption-progress",
+                            Progress {
+                                ratio: (k as f64 + p / 100.0) / n,
+                            },
+                        );
+                    },
+                )
+                .map_err(|e| e.to_string())?;
+                cues.extend(place::place_segments(*start, *dur, &segs, 6));
+            }
+            Ok::<(), String>(())
+        })();
+        let _ = std::fs::remove_dir_all(&tmp);
+        result?;
+        let track = match project.tracks.iter().find(|t| t.kind == TrackKind::Caption) {
+            Some(t) => t.id.clone(),
+            None => project.add_track(TrackKind::Caption, "Captions"),
+        };
+        let items: Vec<(u64, u64, String)> = cues
+            .into_iter()
+            .map(|c| (c.start_ms, c.duration_ms, c.text))
+            .collect();
+        project
+            .replace_captions(&track, &items, &ms_project::TextStyle::default())
+            .map_err(|e| e.to_string())?;
+        project.to_json().map_err(|e| e.to_string())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -341,6 +523,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(ExportState::default())
+        .manage(CaptionState::default())
         .setup(|app| {
             let dir = app.path().app_config_dir()?;
             app.manage(AiState::load(dir.join("ai-providers.json")));
@@ -360,7 +543,13 @@ pub fn run() {
             ai_save_provider,
             ai_delete_provider,
             ai_test_provider,
-            ai_rewrite_captions
+            ai_rewrite_captions,
+            caption_models,
+            download_caption_model,
+            cancel_caption_model,
+            delete_caption_model,
+            auto_caption,
+            cancel_auto_caption
         ])
         .run(tauri::generate_context!())
         .expect("error while running MediaSmith");

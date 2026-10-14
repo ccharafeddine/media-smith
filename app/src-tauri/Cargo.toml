@@ -21,3 +21,4 @@ ms-media = { path = "../../crates/ms-media" }
 ms-import = { path = "../../crates/ms-import" }
 ms-project = { path = "../../crates/ms-project" }
 ms-ai = { path = "../../crates/ms-ai" }
+ms-captions = { path = "../../crates/ms-captions" }
