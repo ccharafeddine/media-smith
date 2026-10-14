@@ -20,6 +20,10 @@ pub enum ProjectError {
     NoTrack(String),
     #[error("no item with id {0}")]
     NoItem(String),
+    #[error("item {0} can't move to track {1} of a different kind")]
+    KindMismatch(String, String),
+    #[error("trimming item {0} would start before its source")]
+    TrimBeforeSource(String),
     #[error("split point {0}ms is outside item {1}")]
     BadSplit(u64, String),
 }
@@ -204,6 +208,108 @@ impl Project {
         Err(ProjectError::NoItem(item_id.into()))
     }
 
+    fn locate(&self, item_id: &str) -> Result<(usize, usize), ProjectError> {
+        for (ti, t) in self.tracks.iter().enumerate() {
+            if let Some(ii) = t.items.iter().position(|i| i.id == item_id) {
+                return Ok((ti, ii));
+            }
+        }
+        Err(ProjectError::NoItem(item_id.into()))
+    }
+
+    /// Apply `f` to a copy of the project and keep it only if it validates,
+    /// so a rejected edit never leaves a half-applied state.
+    fn transact(
+        &mut self,
+        f: impl FnOnce(&mut Project) -> Result<(), ProjectError>,
+    ) -> Result<(), ProjectError> {
+        let mut next = self.clone();
+        f(&mut next)?;
+        for t in &mut next.tracks {
+            t.items.sort_by_key(|i| i.start_ms);
+        }
+        next.validate()?;
+        *self = next;
+        Ok(())
+    }
+
+    /// Move an item to a new start time, optionally onto another track of
+    /// the same kind. Rejected (no change) if it would overlap.
+    pub fn move_item(
+        &mut self,
+        item_id: &str,
+        start_ms: u64,
+        to_track: Option<&str>,
+    ) -> Result<(), ProjectError> {
+        let (ti, ii) = self.locate(item_id)?;
+        let dest = match to_track {
+            Some(id) => self
+                .tracks
+                .iter()
+                .position(|t| t.id == id)
+                .ok_or_else(|| ProjectError::NoTrack(id.into()))?,
+            None => ti,
+        };
+        if self.tracks[dest].kind != self.tracks[ti].kind {
+            return Err(ProjectError::KindMismatch(
+                item_id.into(),
+                self.tracks[dest].id.clone(),
+            ));
+        }
+        self.transact(|p| {
+            let mut it = p.tracks[ti].items.remove(ii);
+            it.start_ms = start_ms;
+            p.tracks[dest].items.push(it);
+            Ok(())
+        })
+    }
+
+    /// Trim an item to a new `[start, start+duration)` window on the timeline.
+    /// Trimming the left edge advances a clip's source offset by the same
+    /// amount so the frames under the playhead don't shift.
+    pub fn trim(
+        &mut self,
+        item_id: &str,
+        start_ms: u64,
+        duration_ms: u64,
+    ) -> Result<(), ProjectError> {
+        let (ti, ii) = self.locate(item_id)?;
+        self.transact(|p| {
+            let it = &mut p.tracks[ti].items[ii];
+            if let ItemKind::Clip { source_in_ms, .. } = &mut it.kind {
+                let shifted = *source_in_ms as i64 + (start_ms as i64 - it.start_ms as i64);
+                if shifted < 0 {
+                    return Err(ProjectError::TrimBeforeSource(item_id.into()));
+                }
+                *source_in_ms = shifted as u64;
+            }
+            it.start_ms = start_ms;
+            it.duration_ms = duration_ms;
+            Ok(())
+        })
+    }
+
+    /// Remove an item; returns it.
+    pub fn delete_item(&mut self, item_id: &str) -> Result<Item, ProjectError> {
+        let (ti, ii) = self.locate(item_id)?;
+        Ok(self.tracks[ti].items.remove(ii))
+    }
+
+    /// Clips of the first video track, in timeline order: what a simple
+    /// single-track export renders.
+    pub fn main_video_clips(&self) -> Vec<&Item> {
+        self.tracks
+            .iter()
+            .find(|t| t.kind == TrackKind::Video)
+            .map(|t| {
+                t.items
+                    .iter()
+                    .filter(|i| matches!(i.kind, ItemKind::Clip { .. }))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     /// Project length: the end of the last item on any track.
     pub fn duration_ms(&self) -> u64 {
         self.tracks
@@ -386,5 +492,76 @@ mod tests {
             Project::from_json(&j),
             Err(ProjectError::Overlap(..))
         ));
+    }
+
+    #[test]
+    fn move_item_within_and_across_tracks() {
+        let mut p = sample();
+        let v = p.tracks[0].id.clone();
+        let v2 = p.add_track(TrackKind::Video, "V2");
+        let b = p.tracks[0].items[1].id.clone();
+        p.move_item(&b, 9000, None).unwrap();
+        assert_eq!(p.tracks[0].items[1].start_ms, 9000);
+        p.move_item(&b, 0, Some(&v2)).unwrap();
+        assert_eq!(p.tracks[0].items.len(), 1);
+        assert_eq!(p.tracks.last().unwrap().items[0].id, b);
+        let a = p.tracks[0].items[0].id.clone();
+        // Overlap and kind mismatch are rejected without changing anything.
+        let before = p.clone();
+        assert!(matches!(
+            p.move_item(&a, 0, Some(&v2)),
+            Err(ProjectError::Overlap(..))
+        ));
+        let cap = p.tracks[1].id.clone();
+        assert!(matches!(
+            p.move_item(&a, 0, Some(&cap)),
+            Err(ProjectError::KindMismatch(..))
+        ));
+        assert_eq!(p, before);
+        assert!(p.move_item("nope", 0, Some(&v)).is_err());
+    }
+
+    #[test]
+    fn trim_left_edge_advances_source_offset() {
+        let mut p = sample();
+        let a = p.tracks[0].items[0].id.clone();
+        p.trim(&a, 1000, 3000).unwrap();
+        let it = &p.tracks[0].items[0];
+        assert_eq!((it.start_ms, it.duration_ms), (1000, 3000));
+        assert!(matches!(
+            it.kind,
+            ItemKind::Clip {
+                source_in_ms: 1000,
+                ..
+            }
+        ));
+        // Can't extend left past the source start, or to zero length, or into a neighbour.
+        assert!(matches!(p.trim(&a, 0, 4000), Ok(())));
+        assert!(matches!(
+            p.trim(&a, 0, 4000).and(p.trim(&a, 0, 0)),
+            Err(ProjectError::EmptyItem(_))
+        ));
+        let mut q = sample();
+        let a2 = q.tracks[0].items[0].id.clone();
+        q.tracks[0].items[0].start_ms = 500;
+        assert!(matches!(
+            q.trim(&a2, 0, 5000),
+            Err(ProjectError::TrimBeforeSource(_))
+        ));
+        assert!(matches!(
+            q.trim(&a2, 500, 6000),
+            Err(ProjectError::Overlap(..))
+        ));
+    }
+
+    #[test]
+    fn delete_and_main_video_clips() {
+        let mut p = sample();
+        assert_eq!(p.main_video_clips().len(), 2);
+        let a = p.tracks[0].items[0].id.clone();
+        let gone = p.delete_item(&a).unwrap();
+        assert_eq!(gone.id, a);
+        assert_eq!(p.main_video_clips().len(), 1);
+        assert!(p.delete_item(&a).is_err());
     }
 }
