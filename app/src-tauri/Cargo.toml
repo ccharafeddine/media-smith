@@ -20,3 +20,4 @@ serde_json.workspace = true
 ms-media = { path = "../../crates/ms-media" }
 ms-import = { path = "../../crates/ms-import" }
 ms-project = { path = "../../crates/ms-project" }
+ms-ai = { path = "../../crates/ms-ai" }
