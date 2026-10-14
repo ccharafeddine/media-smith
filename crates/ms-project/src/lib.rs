@@ -80,6 +80,41 @@ pub enum ItemKind {
     },
 }
 
+/// Placement of a clip on an overlay (non-main) video track: normalised
+/// centre position, width as a fraction of the canvas, and opacity.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Transform {
+    pub x: f32,
+    pub y: f32,
+    pub scale: f32,
+    pub opacity: f32,
+}
+
+impl Default for Transform {
+    /// Picture-in-picture, bottom-right.
+    fn default() -> Self {
+        Self {
+            x: 0.78,
+            y: 0.78,
+            scale: 0.35,
+            opacity: 1.0,
+        }
+    }
+}
+
+impl Transform {
+    /// Clamp into renderable ranges.
+    pub fn clamped(self) -> Self {
+        let f = |v: f32, lo: f32, hi: f32| if v.is_finite() { v.clamp(lo, hi) } else { lo };
+        Self {
+            x: f(self.x, 0.0, 1.0),
+            y: f(self.y, 0.0, 1.0),
+            scale: f(self.scale, 0.05, 1.0),
+            opacity: f(self.opacity, 0.0, 1.0),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Item {
     pub id: String,
@@ -87,6 +122,10 @@ pub struct Item {
     pub duration_ms: u64,
     #[serde(flatten)]
     pub kind: ItemKind,
+    /// Overlay placement; `None` = track default (full frame on the main
+    /// track, [`Transform::default`] on overlay tracks).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transform: Option<Transform>,
 }
 
 impl Item {
@@ -172,6 +211,7 @@ impl Project {
             start_ms,
             duration_ms,
             kind,
+            transform: None,
         };
         let t = self.track_mut(track)?;
         t.items.push(item);
@@ -295,6 +335,67 @@ impl Project {
         Ok(self.tracks[ti].items.remove(ii))
     }
 
+    /// Set (or clear) an item's overlay transform.
+    pub fn set_transform(
+        &mut self,
+        item_id: &str,
+        transform: Option<Transform>,
+    ) -> Result<(), ProjectError> {
+        let (ti, ii) = self.locate(item_id)?;
+        self.tracks[ti].items[ii].transform = transform.map(Transform::clamped);
+        Ok(())
+    }
+
+    /// Overlay video tracks (every video track after the first), bottom to
+    /// top, with their clips in timeline order.
+    pub fn overlay_video_clips(&self) -> Vec<&Item> {
+        self.tracks
+            .iter()
+            .filter(|t| t.kind == TrackKind::Video)
+            .skip(1)
+            .filter(|t| !t.muted)
+            .flat_map(|t| t.items.iter())
+            .filter(|i| matches!(i.kind, ItemKind::Clip { .. }))
+            .collect()
+    }
+
+    /// Replace every item on a caption track with `items` (start, duration,
+    /// text), using the default style. Overlapping or empty entries are
+    /// dropped. Returns the number placed.
+    pub fn replace_captions(
+        &mut self,
+        track: &str,
+        items: &[(u64, u64, String)],
+        style: &TextStyle,
+    ) -> Result<usize, ProjectError> {
+        if self.track_mut(track)?.kind != TrackKind::Caption {
+            return Err(ProjectError::KindMismatch("captions".into(), track.into()));
+        }
+        let mut placed = Vec::new();
+        let mut cursor = 0u64;
+        for (start, dur, text) in items {
+            let text = text.trim();
+            if *dur == 0 || text.is_empty() || *start < cursor {
+                continue;
+            }
+            let id = self.fresh_id("i");
+            placed.push(Item {
+                id,
+                start_ms: *start,
+                duration_ms: *dur,
+                kind: ItemKind::Caption {
+                    text: text.into(),
+                    style: style.clone(),
+                },
+                transform: None,
+            });
+            cursor = start + dur;
+        }
+        let n = placed.len();
+        self.track_mut(track)?.items = placed;
+        Ok(n)
+    }
+
     /// Clips of the first video track, in timeline order: what a simple
     /// single-track export renders.
     pub fn main_video_clips(&self) -> Vec<&Item> {
@@ -357,6 +458,81 @@ fn validate_track(t: &Track) -> Result<(), ProjectError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn transform_roundtrips_and_clamps() {
+        let mut p = Project::new("t", 1080, 1920, 30);
+        let v1 = p.add_track(TrackKind::Video, "V1");
+        let v2 = p.add_track(TrackKind::Video, "Overlay");
+        let clip = || ItemKind::Clip {
+            source: "a.mp4".into(),
+            source_in_ms: 0,
+            volume: 1.0,
+        };
+        p.add_item(&v1, 0, 1000, clip()).unwrap();
+        let o = p.add_item(&v2, 200, 500, clip()).unwrap();
+        p.set_transform(
+            &o,
+            Some(Transform {
+                x: 2.0,
+                y: -1.0,
+                scale: 0.0,
+                opacity: 0.5,
+            }),
+        )
+        .unwrap();
+        let t = p.overlay_video_clips()[0].transform.unwrap();
+        assert_eq!((t.x, t.y, t.scale, t.opacity), (1.0, 0.0, 0.05, 0.5));
+        assert_eq!(p.main_video_clips().len(), 1);
+        let back = Project::from_json(&p.to_json().unwrap()).unwrap();
+        assert_eq!(back, p);
+        // Items without a transform don't serialise the key (old files stay identical).
+        assert!(!p.to_json().unwrap().contains("\"transform\":null"));
+        assert!(p.set_transform("nope", None).is_err());
+    }
+
+    #[test]
+    fn replace_captions_fills_track_and_drops_bad_entries() {
+        let mut p = Project::new("t", 1080, 1920, 30);
+        let c = p.add_track(TrackKind::Caption, "C");
+        let v = p.add_track(TrackKind::Video, "V");
+        p.add_item(
+            &c,
+            0,
+            100,
+            ItemKind::Caption {
+                text: "old".into(),
+                style: TextStyle::default(),
+            },
+        )
+        .unwrap();
+        let n = p
+            .replace_captions(
+                &c,
+                &[
+                    (0, 900, " hello ".into()),
+                    (500, 400, "overlaps".into()),
+                    (1000, 0, "empty".into()),
+                    (1000, 800, "world".into()),
+                    (2000, 500, "  ".into()),
+                ],
+                &TextStyle::default(),
+            )
+            .unwrap();
+        assert_eq!(n, 2);
+        let t = p.tracks.iter().find(|t| t.id == c).unwrap();
+        let texts: Vec<_> = t
+            .items
+            .iter()
+            .map(|i| match &i.kind {
+                ItemKind::Caption { text, .. } => text.as_str(),
+                _ => "",
+            })
+            .collect();
+        assert_eq!(texts, ["hello", "world"]);
+        assert!(p.validate().is_ok());
+        assert!(p.replace_captions(&v, &[], &TextStyle::default()).is_err());
+    }
 
     fn clip(src: &str) -> ItemKind {
         ItemKind::Clip {
