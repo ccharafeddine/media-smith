@@ -3,6 +3,8 @@ import { gifArgs, safeName, type MediaRef, type Platform } from "./types";
 
 let ffmpeg: Promise<FFmpeg> | null = null;
 
+const AI_WEB = "AI features run in the desktop app for now (keys stay in the OS keychain). See docs/ai.md for the web plan.";
+
 /** Lazily load ffmpeg.wasm (single-threaded core from the same origin, so it
  *  works without COOP/COEP; the multi-threaded core needs those headers). */
 export function loadFfmpeg(coreURL?: string, wasmURL?: string): Promise<FFmpeg> {
@@ -101,6 +103,16 @@ export const webPlatform: Platform = {
     const name = safeName(`${p.name}-gif`, "gif");
     download(blob, name);
     return name;
+  },
+  cancelExport: async () => undefined,
+  filmstrip: async () => null,
+  ai: {
+    available: false,
+    settings: async () => ({ providers: [], text_provider: null }),
+    saveProvider: async () => { throw new Error(AI_WEB); },
+    deleteProvider: async () => { throw new Error(AI_WEB); },
+    testProvider: async () => { throw new Error(AI_WEB); },
+    rewriteCaptions: async () => { throw new Error(AI_WEB); },
   },
   toGif: async (input, opts, onProgress) => {
     if (typeof input === "string") throw new Error("The web build takes a local File, not a path.");

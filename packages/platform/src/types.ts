@@ -57,6 +57,11 @@ export interface Platform {
   openProject(): Promise<string | null>;
   /** Render the main video track. Returns the output path/name, or null if cancelled. */
   exportProject(json: string, preset: ExportPreset, onProgress?: (ratio: number) => void): Promise<string | null>;
+  /** Stop a running export (no-op if none). */
+  cancelExport(): Promise<void>;
+  /** Thumbnail strip for a clip range as an image URL, or null if unsupported. */
+  filmstrip(source: string, sourceInMs: number, durationMs: number, count: number): Promise<string | null>;
+  ai: AiApi;
   /** Convert a video to GIF. Desktop takes a path, web takes a File/Blob. */
   toGif(input: File | string, opts: GifOptions, onProgress?: (ratio: number) => void): Promise<Blob | string>;
 }
@@ -73,4 +78,28 @@ export function gifArgs(input: string, output: string, o: GifOptions): string[] 
 export function safeName(name: string, ext: string): string {
   const base = name.trim().replace(/[\\/:*?"<>|]+/g, "_").replace(/\s+/g, " ") || "Untitled";
   return `${base}.${ext}`;
+}
+
+export type ProviderKind = "openai" | "gemini" | "anthropic" | "compatible";
+
+export interface ProviderConfig { id: string; kind: ProviderKind; label: string; base_url: string; model: string }
+export interface ProviderView extends ProviderConfig { has_key: boolean }
+export interface AiView { providers: ProviderView[]; text_provider: string | null }
+
+export const PROVIDER_DEFAULTS: Record<ProviderKind, { label: string; base_url: string; model: string; needsKey: boolean }> = {
+  openai: { label: "OpenAI", base_url: "https://api.openai.com/v1", model: "gpt-4.1-mini", needsKey: true },
+  gemini: { label: "Google Gemini", base_url: "https://generativelanguage.googleapis.com/v1beta/openai", model: "gemini-2.5-flash", needsKey: true },
+  anthropic: { label: "Anthropic", base_url: "https://api.anthropic.com/v1", model: "claude-sonnet-4-5", needsKey: true },
+  compatible: { label: "Ollama / compatible", base_url: "http://localhost:11434/v1", model: "llama3.2", needsKey: false },
+};
+
+/** Bring-your-own-key AI. Keys go to the OS keychain on desktop. */
+export interface AiApi {
+  available: boolean;
+  settings(): Promise<AiView>;
+  /** key: undefined keeps the stored key, "" deletes it. */
+  saveProvider(config: ProviderConfig, key: string | undefined, makeDefault: boolean): Promise<AiView>;
+  deleteProvider(id: string): Promise<AiView>;
+  testProvider(id: string): Promise<string[]>;
+  rewriteCaptions(lines: string[], instruction: string): Promise<string[]>;
 }

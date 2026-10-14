@@ -1,4 +1,4 @@
-import type { ExportPreset, MediaMeta, MediaRef, Platform } from "./types";
+import type { AiView, ExportPreset, MediaMeta, MediaRef, Platform, ProviderConfig } from "./types";
 import { safeName } from "./types";
 
 async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
@@ -47,13 +47,30 @@ export const tauriPlatform: Platform = {
     if (!path || Array.isArray(path)) return null;
     return invoke<string>("load_project", { path });
   },
-  async exportProject(json, preset: ExportPreset) {
+  async exportProject(json, preset: ExportPreset, onProgress) {
     const { save } = await import("@tauri-apps/plugin-dialog");
     const ext = preset === "gif" ? "gif" : "mp4";
     const name = (JSON.parse(json) as { name?: string }).name ?? "export";
     const output = await save({ defaultPath: safeName(`${name}-${preset}`, ext), filters: [{ name: ext.toUpperCase(), extensions: [ext] }] });
     if (!output) return null;
-    return invoke<string>("export_project", { json, preset, output });
+    const { listen } = await import("@tauri-apps/api/event");
+    const unlisten = await listen<{ ratio: number }>("export-progress", (e) => onProgress?.(e.payload.ratio));
+    try {
+      return await invoke<string>("export_project", { json, preset, output });
+    } finally {
+      unlisten();
+    }
+  },
+  cancelExport: () => invoke<void>("cancel_export"),
+  filmstrip: (path, sourceInMs, durationMs, count) =>
+    invoke<string>("filmstrip", { path, sourceInMs, durationMs, count }),
+  ai: {
+    available: true,
+    settings: () => invoke<AiView>("ai_settings"),
+    saveProvider: (config: ProviderConfig, key, makeDefault) => invoke<AiView>("ai_save_provider", { config, key: key ?? null, makeDefault }),
+    deleteProvider: (id) => invoke<AiView>("ai_delete_provider", { id }),
+    testProvider: (id) => invoke<string[]>("ai_test_provider", { id }),
+    rewriteCaptions: (lines, instruction) => invoke<string[]>("ai_rewrite_captions", { lines, instruction }),
   },
   toGif: async () => {
     throw new Error("On desktop, use Export with the GIF preset.");

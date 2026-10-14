@@ -42,3 +42,19 @@ describe("export presets and names", () => {
     await expect(getPlatform({}).exportProject("{}", "vertical")).rejects.toThrow(/desktop/);
   });
 });
+
+import { PROVIDER_DEFAULTS } from "./types";
+
+describe("AI providers", () => {
+  it("defaults match the Rust ProviderKind defaults", () => {
+    expect(PROVIDER_DEFAULTS.compatible.base_url).toBe("http://localhost:11434/v1");
+    expect(PROVIDER_DEFAULTS.gemini.base_url.endsWith("/openai")).toBe(true);
+    expect(PROVIDER_DEFAULTS.compatible.needsKey).toBe(false);
+  });
+  it("web build has AI disabled with a clear message", async () => {
+    const w = getPlatform({});
+    expect(w.ai.available).toBe(false);
+    await expect(w.ai.rewriteCaptions(["a"], "x")).rejects.toThrow(/desktop/);
+    expect(await w.filmstrip("web:1", 0, 1000, 4)).toBeNull();
+  });
+});
