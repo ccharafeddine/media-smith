@@ -1,0 +1,30 @@
+@font-face { font-family: "Syne"; font-weight: 800; src: url("../../../packages/ui/src/fonts/syne-800.woff2"); }
+@font-face { font-family: "Syne"; font-weight: 700; src: url("../../../packages/ui/src/fonts/syne-700.woff2"); }
+@font-face { font-family: "Syne"; font-weight: 500; src: url("../../../packages/ui/src/fonts/syne-500.woff2"); }
+.ms { width: 1440px; height: 900px; }
+.sec { font-size: 11px; text-transform: uppercase; letter-spacing: .1em; color: var(--fg-3); margin-top: 4px; }
+.card { background: var(--bg-panel); border: 1px solid var(--border); border-radius: 10px; padding: 12px; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.sw { height: 54px; border-radius: 8px; display: grid; place-items: center; font: 800 14px var(--font-display); border: 1px solid var(--border-strong); }
+.sw.on { outline: 2px solid var(--accent); }
+.seg { display: flex; background: var(--bg-control); border-radius: 8px; padding: 3px; gap: 2px; }
+.seg span { flex: 1; text-align: center; padding: 6px 0; border-radius: 6px; color: var(--fg-2); font-size: 12px; }
+.seg span.on { background: var(--bg-hover); color: var(--fg); }
+.kv { display: flex; justify-content: space-between; color: var(--fg-2); font-size: 12px; }
+.kv b { color: var(--fg); font-weight: 600; }
+.bar { height: 4px; border-radius: 4px; background: var(--bg-control); position: relative; }
+.bar i { position: absolute; inset: 0 auto 0 0; border-radius: 4px; background: var(--grad); }
+.knob { display: flex; flex-direction: column; gap: 6px; }
+.btn2 { background: var(--bg-control); border: 1px solid var(--border-strong); border-radius: 999px; padding: 9px; text-align: center; font-weight: 600; }
+.btnp { background: var(--grad); border-radius: 999px; padding: 11px; text-align: center; font-weight: 700; box-shadow: 0 0 24px rgba(169,116,255,.35); }
+.thumbs { display: flex; gap: 2px; height: 100%; }
+.thumbs i { flex: 1; background: linear-gradient(180deg, #4a3a85, #233a5e); opacity: .8; }
+.cline { padding: 8px 10px; border-radius: 8px; background: var(--bg-panel); border: 1px solid var(--border); display: flex; gap: 10px; font-size: 12px; }
+.cline.on { border-color: var(--track-caption); background: rgba(255,95,162,.08); }
+.cline time { color: var(--fg-3); font-variant-numeric: tabular-nums; }
+.word { color: #fff; } .word.hl { color: #0a0a0a; background: #45f2f2; border-radius: 4px; padding: 0 4px; }
+.scene { position: absolute; inset: 0; background: radial-gradient(circle at 30% 30%, #ff7ab8 0, transparent 40%), radial-gradient(circle at 70% 60%, #6b5bff 0, transparent 45%), linear-gradient(160deg, #2a1550, #0d2a3a); }
+.person { position: absolute; left: 50%; bottom: 0; width: 46%; height: 62%; transform: translateX(-50%); background: radial-gradient(circle at 50% 22%, #f2c7a5 0 16%, transparent 16.5%), radial-gradient(ellipse at 50% 100%, #1b1b2a 0 48%, transparent 48.5%); }
+.cap { white-space: normal; text-align: center; width: max-content; max-width: 88%; font-size: 21px; line-height: 1.25; -webkit-text-stroke: 0; text-shadow: 0 2px 0 #000; }
+.cs .ms-top, .cs .ms-stage, .cs .ms-panel, .cs .ms-timeline { grid-area: auto; } .cs .canvas { height: auto; }

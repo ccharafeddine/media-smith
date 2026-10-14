@@ -1,0 +1,15 @@
+MediaSmith progress log
+=======================
+
+2026-10-14 - Phase 1 scaffold (branch scaffold/phase-1)
+- Cargo workspace: ms-media (probe, runner, encoders), ms-import (yt-dlp routing +
+  generic scraper from ClipSmith v2.1.0, tests ported), ms-project (timeline model,
+  JSON save/load, split/overlap validation, tests), app/src-tauri thin Tauri 2 shell.
+- npm workspaces: packages/ui (Smith tokens + Syne + components), packages/platform
+  (Tauri vs web adapter, ffmpeg.wasm GIF path), app (SolidJS editor shell with mock
+  timeline), apps/web-demo (in-browser video to GIF).
+- Docs: README vision/roadmap, docs/web.md feasibility, docs/mockups (5 PNGs).
+- CI: fmt, clippy, cargo test, typecheck, vitest, build.
+
+Next: wire the real player to ms-project, file import + probe, ffmpeg export with
+presets, port GifSmith encoder and CaptionSmith whisper pipeline.

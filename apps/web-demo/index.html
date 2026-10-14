@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>GifSmith web demo · MediaSmith</title>
+  </head>
+  <body>
+    <main class="demo">
+      <h1><b>Gif</b><span>Smith</span> <small>web demo</small></h1>
+      <p class="sub">Video to GIF, entirely in your browser. Nothing is uploaded.</p>
+      <label class="drop" id="drop">
+        <input type="file" id="file" accept="video/*" hidden />
+        <span id="dropText">Drop a video or click to choose (max 500 MB)</span>
+      </label>
+      <video id="preview" controls muted playsinline hidden></video>
+      <div class="row">
+        <label>Start (s)<input id="start" type="number" min="0" step="0.1" value="0" /></label>
+        <label>Length (s)<input id="dur" type="number" min="0.5" max="15" step="0.5" value="4" /></label>
+        <label>Width<select id="width"><option>320</option><option selected>480</option><option>640</option></select></label>
+        <label>FPS<select id="fps"><option>10</option><option selected>15</option><option>24</option></select></label>
+      </div>
+      <button id="go" disabled>Make GIF</button>
+      <progress id="prog" max="1" value="0" hidden></progress>
+      <p id="status" class="status"></p>
+      <figure id="out" hidden><img id="gif" alt="GIF result" /><figcaption><a id="dl" download="gifsmith.gif">Download GIF</a> <span id="size"></span></figcaption></figure>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

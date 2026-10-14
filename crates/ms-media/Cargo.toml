@@ -1,0 +1,11 @@
+[package]
+name = "ms-media"
+description = "MediaSmith media core: ffprobe parsing, ffmpeg runner, encoder selection"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true

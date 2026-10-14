@@ -1,0 +1,16 @@
+{
+  "name": "mediasmith",
+  "private": true,
+  "version": "0.1.0",
+  "license": "GPL-3.0-or-later",
+  "type": "module",
+  "workspaces": ["packages/*", "app", "apps/*"],
+  "scripts": {
+    "dev": "npm run dev -w @mediasmith/app",
+    "dev:web": "npm run dev:web -w @mediasmith/app",
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "tauri": "npm run tauri -w @mediasmith/app --"
+  }
+}
