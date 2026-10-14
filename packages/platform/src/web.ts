@@ -64,6 +64,8 @@ function emptyProject(name: string, width: number, height: number, fps: number):
   return JSON.stringify({ version: 1, name, canvas: { width, height, fps }, tracks, next_id: 3 }, null, 2);
 }
 
+const CAP_WEB = "Auto-captions need the desktop app for now (in-browser whisper is planned).";
+
 export const webPlatform: Platform = {
   kind: "web",
   caps: { urlImport: false, hardwareEncode: false, transcribe: "wasm", maxInputBytes: 500 * 1024 * 1024, exportPresets: ["gif"] },
@@ -113,6 +115,15 @@ export const webPlatform: Platform = {
     deleteProvider: async () => { throw new Error(AI_WEB); },
     testProvider: async () => { throw new Error(AI_WEB); },
     rewriteCaptions: async () => { throw new Error(AI_WEB); },
+  },
+  captions: {
+    available: false,
+    models: async () => [],
+    downloadModel: async () => { throw new Error(CAP_WEB); },
+    cancelDownload: async () => undefined,
+    deleteModel: async () => { throw new Error(CAP_WEB); },
+    autoCaption: async () => { throw new Error(CAP_WEB); },
+    cancel: async () => undefined,
   },
   toGif: async (input, opts, onProgress) => {
     if (typeof input === "string") throw new Error("The web build takes a local File, not a path.");

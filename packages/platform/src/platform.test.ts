@@ -58,3 +58,16 @@ describe("AI providers", () => {
     expect(await w.filmstrip("web:1", 0, 1000, 4)).toBeNull();
   });
 });
+
+describe("captions api", () => {
+  it("parses the missing-model error and is desktop-only", async () => {
+    const { missingModel } = await import("./types");
+    expect(missingModel(new Error("MODEL_NOT_FOUND|ggml-base.en.bin"))).toBe("ggml-base.en.bin");
+    expect(missingModel("boom")).toBeNull();
+    expect(getPlatform({ __TAURI_INTERNALS__: {} }).captions.available).toBe(true);
+    const web = getPlatform({}).captions;
+    expect(web.available).toBe(false);
+    await expect(web.autoCaption("{}", null, null)).rejects.toThrow(/desktop/);
+    expect(await web.models()).toEqual([]);
+  });
+});

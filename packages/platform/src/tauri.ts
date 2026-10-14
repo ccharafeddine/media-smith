@@ -1,9 +1,14 @@
-import type { AiView, ExportPreset, MediaMeta, MediaRef, Platform, ProviderConfig } from "./types";
+import type { AiView, CaptionModel, ExportPreset, MediaMeta, MediaRef, Platform, ProviderConfig } from "./types";
 import { safeName } from "./types";
 
 async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   const core = await import("@tauri-apps/api/core");
   return core.invoke<T>(cmd, args);
+}
+
+async function listen<T>(event: string, f: (e: { payload: T }) => void): Promise<() => void> {
+  const ev = await import("@tauri-apps/api/event");
+  return ev.listen<T>(event, f);
 }
 
 const VIDEO_EXT = ["mp4", "mov", "mkv", "webm", "avi", "m4v"];
@@ -53,7 +58,6 @@ export const tauriPlatform: Platform = {
     const name = (JSON.parse(json) as { name?: string }).name ?? "export";
     const output = await save({ defaultPath: safeName(`${name}-${preset}`, ext), filters: [{ name: ext.toUpperCase(), extensions: [ext] }] });
     if (!output) return null;
-    const { listen } = await import("@tauri-apps/api/event");
     const unlisten = await listen<{ ratio: number }>("export-progress", (e) => onProgress?.(e.payload.ratio));
     try {
       return await invoke<string>("export_project", { json, preset, output });
@@ -71,6 +75,30 @@ export const tauriPlatform: Platform = {
     deleteProvider: (id) => invoke<AiView>("ai_delete_provider", { id }),
     testProvider: (id) => invoke<string[]>("ai_test_provider", { id }),
     rewriteCaptions: (lines, instruction) => invoke<string[]>("ai_rewrite_captions", { lines, instruction }),
+  },
+  captions: {
+    available: true,
+    models: () => invoke<CaptionModel[]>("caption_models"),
+    async downloadModel(file, onProgress) {
+      const unlisten = await listen<{ file: string; received: number; total: number | null }>("model-download-progress", (e) =>
+        onProgress?.(e.payload.total ? e.payload.received / e.payload.total : null));
+      try {
+        await invoke<void>("download_caption_model", { file });
+      } finally {
+        unlisten();
+      }
+    },
+    cancelDownload: () => invoke<void>("cancel_caption_model"),
+    deleteModel: (file) => invoke<void>("delete_caption_model", { file }),
+    async autoCaption(json, model, language, onProgress) {
+      const unlisten = await listen<{ ratio: number }>("caption-progress", (e) => onProgress?.(e.payload.ratio));
+      try {
+        return await invoke<string>("auto_caption", { json, model, language });
+      } finally {
+        unlisten();
+      }
+    },
+    cancel: () => invoke<void>("cancel_auto_caption"),
   },
   toGif: async () => {
     throw new Error("On desktop, use Export with the GIF preset.");

@@ -62,6 +62,7 @@ export interface Platform {
   /** Thumbnail strip for a clip range as an image URL, or null if unsupported. */
   filmstrip(source: string, sourceInMs: number, durationMs: number, count: number): Promise<string | null>;
   ai: AiApi;
+  captions: CaptionsApi;
   /** Convert a video to GIF. Desktop takes a path, web takes a File/Blob. */
   toGif(input: File | string, opts: GifOptions, onProgress?: (ratio: number) => void): Promise<Blob | string>;
 }
@@ -102,4 +103,26 @@ export interface AiApi {
   deleteProvider(id: string): Promise<AiView>;
   testProvider(id: string): Promise<string[]>;
   rewriteCaptions(lines: string[], instruction: string): Promise<string[]>;
+}
+
+/** A whisper model the manager knows about (allowlisted, SHA-256 checked). */
+export interface CaptionModel { file: string; label: string; size_mb: number; multilingual: boolean; installed: boolean; is_default: boolean }
+
+/** Speech-to-text auto-captions (whisper-cli sidecar on desktop). */
+export interface CaptionsApi {
+  available: boolean;
+  models(): Promise<CaptionModel[]>;
+  /** Download + verify a model; progress is 0..1 when the size is known. */
+  downloadModel(file: string, onProgress?: (ratio: number | null) => void): Promise<void>;
+  cancelDownload(): Promise<void>;
+  deleteModel(file: string): Promise<void>;
+  /** Transcribe the main track and return the project JSON with its caption track replaced. */
+  autoCaption(json: string, model: string | null, language: string | null, onProgress?: (ratio: number) => void): Promise<string>;
+  cancel(): Promise<void>;
+}
+
+/** "MODEL_NOT_FOUND|<file>" from the shell means the model needs downloading. */
+export function missingModel(err: unknown): string | null {
+  const m = /MODEL_NOT_FOUND\|(\S+)/.exec(String(err instanceof Error ? err.message : err));
+  return m ? m[1] : null;
 }
