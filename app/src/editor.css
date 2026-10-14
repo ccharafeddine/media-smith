@@ -92,3 +92,13 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 .cap-row { display: flex; gap: 8px; font-size: 12px; padding: 6px 8px; border-radius: 8px; background: var(--bg-panel); border: 1px solid var(--border); }
 .cap-row time { color: var(--fg-3); font-variant-numeric: tabular-nums; }
 .cap-row.changed { border-color: var(--track-caption); }
+
+/* phase 4: canvas layers + inspector */
+.text-layer { position: absolute; transform: translate(-50%, -50%); white-space: pre-wrap; text-align: center; font-weight: 700; line-height: 1.1; cursor: pointer; paint-order: stroke fill; max-width: 92%; }
+.text-layer.sel { outline: 1px dashed var(--track-caption); outline-offset: 4px; }
+.overlay-video { position: absolute; transform: translate(-50%, -50%); border-radius: 6px; pointer-events: none; }
+.inspector { display: flex; flex-direction: column; gap: 6px; }
+.inspector textarea, .inspector input[type="number"] { width: 100%; }
+.field { display: flex; flex-direction: column; gap: 2px; font-size: 11px; color: var(--fg-2); flex: 1; }
+.chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.btn2.primary { border-color: var(--track-caption); }

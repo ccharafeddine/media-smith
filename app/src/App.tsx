@@ -7,6 +7,7 @@ import { Timeline } from "./components/Timeline";
 import { Player } from "./components/Player";
 import { Settings } from "./components/Settings";
 import { CaptionsPanel } from "./components/CaptionsPanel";
+import { Inspector } from "./components/Inspector";
 
 const ICONS: Record<Tool, string> = { Edit: "✂", Clip: "▭", GIF: "◎", Captions: "CC", Design: "◆", Import: "⇣", Settings: "⚙" };
 
@@ -37,6 +38,11 @@ export default function App() {
     const refs = await platform.importMedia();
     for (const r of refs) editor.importClip(r.source, Math.round(r.meta.duration_secs * 1000));
     return refs.length ? `${refs.length} file(s) added` : null;
+  });
+  const importOverlay = () => run("Overlay", async () => {
+    const [r] = await platform.importMedia();
+    if (r) editor.importOverlay(r.source, Math.round(r.meta.duration_secs * 1000));
+    return r ? `${r.name} added as picture-in-picture` : null;
   });
   const save = () => run("Saved", async () => {
     const where = await platform.saveProject(toJson(editor.project()), editor.project().name);
@@ -115,6 +121,11 @@ export default function App() {
         <Show when={tool() !== "Captions" && tool() === "Settings"}><Settings platform={platform} /></Show>
         <Show when={tool() !== "Captions" && tool() !== "Settings"}>
             <button class="btn2" onClick={importMedia}>⇣ Import video</button>
+            <div class="row">
+              <button class="btn2" onClick={() => editor.addText("Your title", editor.playhead())}>+ Text</button>
+              <button class="btn2" onClick={importOverlay}>+ Overlay (PiP)</button>
+            </div>
+            <Inspector editor={editor} />
             <Show when={selectedItem()} fallback={<p class="dim">Select a clip on the timeline.</p>}>
               {(it) => (
                 <div class="kvs">

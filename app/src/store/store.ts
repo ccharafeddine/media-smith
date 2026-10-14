@@ -59,6 +59,34 @@ export function createEditor(initial: M.Project = M.newProject()) {
       if (!cap) return false;
       return apply((p) => M.addItem(p, cap.id, start_ms, duration_ms, { type: "caption", text, style: M.defaultStyle() }).project);
     },
+    updateText: (id: string, patch: M.TextPatch) => apply((p) => M.updateText(p, id, patch)),
+    setTransform: (id: string, t: M.Transform | null) => apply((p) => M.setTransform(p, id, t)),
+    /** Replace the whole project in one undoable step (e.g. after Auto-caption). */
+    replace: (next: M.Project) => apply(() => (M.validate(next), next)),
+    /** "+ Text" at the playhead on the first text track (created if missing). */
+    addText(text: string, start_ms: number, duration_ms = 3000) {
+      let id = "";
+      const ok = apply((p) => {
+        const t = M.ensureTrack(p, "text", "Text");
+        const r = M.addItem(t.project, t.id, start_ms, duration_ms, { type: "text", text, style: { ...M.defaultStyle(), y: 0.12, size_px: 96 } });
+        id = r.id;
+        return r.project;
+      });
+      if (ok) setSelected(id);
+      return ok ? id : null;
+    },
+    /** Import onto the overlay (second) video track at the playhead, as picture-in-picture. */
+    importOverlay(source: string, duration_ms: number) {
+      let id = "";
+      const ok = apply((p) => {
+        const t = M.ensureTrack(p, "video", "Overlay", 1);
+        const r = M.addItem(t.project, t.id, playhead(), duration_ms, { type: "clip", source, source_in_ms: 0, volume: 1 });
+        id = r.id;
+        return M.setTransform(r.project, r.id, M.DEFAULT_TRANSFORM);
+      });
+      if (ok) setSelected(id);
+      return ok ? id : null;
+    },
     setTexts: (texts: Record<string, string>) => apply((p) => M.setTexts(p, texts)),
     move: (id: string, start: number, track?: string) => apply((p) => M.moveItem(p, id, start, track)),
     trim: (id: string, start: number, dur: number) => apply((p) => M.trimItem(p, id, start, dur)),

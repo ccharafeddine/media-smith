@@ -11,7 +11,10 @@ export type ItemKind =
   | { type: "text"; text: string; style: TextStyle }
   | { type: "caption"; text: string; style: TextStyle };
 
-export type Item = { id: string; start_ms: number; duration_ms: number } & ItemKind;
+/** Placement of a clip on an overlay video track (mirrors ms-project Transform). */
+export interface Transform { x: number; y: number; scale: number; opacity: number }
+
+export type Item = { id: string; start_ms: number; duration_ms: number; transform?: Transform } & ItemKind;
 
 export interface Track { id: string; kind: TrackKind; name: string; muted: boolean; items: Item[] }
 
@@ -190,4 +193,108 @@ export function captions(p: Project): (Item & { type: "caption" })[] {
     .flatMap((t) => t.items)
     .filter((i): i is Item & { type: "caption" } => i.type === "caption")
     .sort((a, b) => a.start_ms - b.start_ms);
+}
+
+// ---- Inline text/caption editing and overlays (phase 4) ----
+
+export const DEFAULT_TRANSFORM: Transform = { x: 0.78, y: 0.78, scale: 0.35, opacity: 1 };
+
+const clamp = (v: number, lo: number, hi: number) => (Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : lo);
+
+export function clampTransform(t: Transform): Transform {
+  return { x: clamp(t.x, 0, 1), y: clamp(t.y, 0, 1), scale: clamp(t.scale, 0.05, 1), opacity: clamp(t.opacity, 0, 1) };
+}
+
+/** One-click looks for captions and titles (font, size, colours). */
+export const STYLE_PRESETS: { id: string; label: string; style: Partial<TextStyle> }[] = [
+  { id: "classic", label: "Classic", style: { font: "Syne", size_px: 64, color: "#ffffff", stroke: "#000000" } },
+  { id: "bold", label: "Bold yellow", style: { font: "Syne", size_px: 84, color: "#ffd400", stroke: "#000000" } },
+  { id: "clean", label: "Clean", style: { font: "Syne", size_px: 56, color: "#ffffff", stroke: null } },
+  { id: "title", label: "Title", style: { font: "Syne", size_px: 110, color: "#ffffff", stroke: "#1a1a1a" } },
+];
+
+/** Normalised centre positions. */
+export const POSITION_PRESETS: { id: string; label: string; x: number; y: number }[] = [
+  { id: "top", label: "Top", x: 0.5, y: 0.12 },
+  { id: "middle", label: "Middle", x: 0.5, y: 0.5 },
+  { id: "lower", label: "Lower third", x: 0.5, y: 0.7 },
+  { id: "bottom", label: "Bottom", x: 0.5, y: 0.82 },
+];
+
+/** Overlay (picture-in-picture) corners at the default scale. */
+export const PIP_PRESETS: { id: string; label: string; x: number; y: number }[] = [
+  { id: "tl", label: "↖", x: 0.22, y: 0.18 },
+  { id: "tr", label: "↗", x: 0.78, y: 0.18 },
+  { id: "bl", label: "↙", x: 0.22, y: 0.78 },
+  { id: "br", label: "↘", x: 0.78, y: 0.78 },
+  { id: "full", label: "Full", x: 0.5, y: 0.5 },
+];
+
+export interface TextPatch { text?: string; style?: Partial<TextStyle>; start_ms?: number; duration_ms?: number }
+
+/** Edit a text/caption item's text, style or timing in one validated step. */
+export function updateText(p: Project, id: string, patch: TextPatch): Project {
+  const { ti, ii } = locate(p, id);
+  const it = p.tracks[ti].items[ii];
+  if (it.type !== "text" && it.type !== "caption") throw new EditError("Only text and captions have text");
+  if (patch.text !== undefined && !patch.text.trim()) throw new EditError("Text can't be empty");
+  return transact(p, (q) => {
+    const x = q.tracks[ti].items[ii] as Item & { type: "text" | "caption" };
+    if (patch.text !== undefined) x.text = patch.text;
+    if (patch.style) {
+      const st = { ...x.style, ...patch.style };
+      st.x = clamp(st.x, 0, 1);
+      st.y = clamp(st.y, 0, 1);
+      st.size_px = Math.round(clamp(st.size_px, 8, 400));
+      x.style = st;
+    }
+    if (patch.start_ms !== undefined) x.start_ms = Math.max(0, Math.round(patch.start_ms));
+    if (patch.duration_ms !== undefined) x.duration_ms = Math.round(patch.duration_ms);
+  });
+}
+
+/** Set (or clear with null) a clip's overlay transform. */
+export function setTransform(p: Project, id: string, t: Transform | null): Project {
+  const { ti, ii } = locate(p, id);
+  return transact(p, (q) => {
+    const it = q.tracks[ti].items[ii];
+    if (t) it.transform = clampTransform(t);
+    else delete it.transform;
+  });
+}
+
+/** Id of the first track of `kind` (index `nth` among them), creating tracks as needed. */
+export function ensureTrack(p: Project, kind: TrackKind, name: string, nth = 0): { project: Project; id: string } {
+  const q = clone(p);
+  let of = q.tracks.filter((t) => t.kind === kind);
+  while (of.length <= nth) {
+    addTrack(q, kind, name);
+    of = q.tracks.filter((t) => t.kind === kind);
+  }
+  return { project: q, id: of[nth].id };
+}
+
+/** Is this item on an overlay (second or later) video track? */
+export function isOverlayItem(p: Project, id: string): boolean {
+  const videos = p.tracks.filter((t) => t.kind === "video");
+  return videos.slice(1).some((t) => t.items.some((i) => i.id === id));
+}
+
+/** Text/caption items on screen at `t`. */
+export function textsAt(p: Project, t: number): (Item & { type: "text" | "caption" })[] {
+  return p.tracks
+    .filter((tr) => (tr.kind === "text" || tr.kind === "caption") && !tr.muted)
+    .flatMap((tr) => tr.items)
+    .filter((i): i is Item & { type: "text" | "caption" } => (i.type === "text" || i.type === "caption") && t >= i.start_ms && t < endMs(i));
+}
+
+/** Overlay clips on screen at `t`, bottom to top, with source time and transform. */
+export function overlaysAt(p: Project, t: number): { item: Item & { type: "clip" }; sourceMs: number; transform: Transform }[] {
+  return p.tracks
+    .filter((tr) => tr.kind === "video")
+    .slice(1)
+    .filter((tr) => !tr.muted)
+    .flatMap((tr) => tr.items)
+    .filter((i): i is Item & { type: "clip" } => i.type === "clip" && t >= i.start_ms && t < endMs(i))
+    .map((item) => ({ item, sourceMs: item.source_in_ms + (t - item.start_ms), transform: item.transform ?? DEFAULT_TRANSFORM }));
 }
