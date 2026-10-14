@@ -3,5 +3,6 @@
 //! every crate here is testable with plain `cargo test`.
 
 pub mod encoders;
+pub mod export;
 pub mod probe;
 pub mod runner;

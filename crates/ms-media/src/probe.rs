@@ -10,7 +10,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Metadata about the loaded video, sent to the frontend.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct VideoMeta {
     pub duration_secs: f64,
     pub width: u32,
@@ -19,6 +19,10 @@ pub struct VideoMeta {
     pub fps_den: u32,
     pub codec: String,
     pub container: String,
+    /// Whether the file has at least one audio stream (export needs this to
+    /// decide between the source audio and generated silence).
+    #[serde(default)]
+    pub has_audio: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -96,6 +100,10 @@ pub fn parse_meta(json: &str, ext: &str) -> Result<VideoMeta, ProbeError> {
         fps_den,
         codec: video.codec_name.clone().unwrap_or_default(),
         container: ext.to_string(),
+        has_audio: probe
+            .streams
+            .iter()
+            .any(|s| s.codec_type.as_deref() == Some("audio")),
     })
 }
 
@@ -118,6 +126,13 @@ fn parse_rational(s: &str) -> Option<(u32, u32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn detects_audio_streams() {
+        assert!(parse_meta(SAMPLE, "mp4").unwrap().has_audio);
+        let silent = r#"{"streams":[{"codec_type":"video","codec_name":"h264","width":2,"height":2,"duration":"1.0"}]}"#;
+        assert!(!parse_meta(silent, "mp4").unwrap().has_audio);
+    }
 
     // Trimmed but structurally faithful to real ffprobe output (an mp4 with an
     // h264 video stream followed by an aac audio stream).
@@ -161,6 +176,7 @@ mod tests {
                 fps_den: 1,
                 codec: "h264".to_string(),
                 container: "mp4".to_string(),
+                has_audio: true,
             }
         );
     }
