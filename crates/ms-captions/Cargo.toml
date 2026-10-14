@@ -1,0 +1,18 @@
+[package]
+name = "ms-captions"
+description = "MediaSmith auto-captions: whisper-cli sidecar runner, transcript parsing, and a SHA-256-verified model manager (ported from CaptionSmith)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = ["download"]
+# HTTP model downloads (reqwest). Off = install/verify from any reader only.
+download = ["dep:reqwest"]
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+sha2 = "0.10"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "native-tls"], optional = true }
