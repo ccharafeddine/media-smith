@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 
-use ms_project::{ItemKind, Project, TrackKind};
+use ms_project::{ItemKind, Project, TrackKind, Transform};
 
 use crate::encoders::{QualityTier, VideoEncoder};
 
@@ -75,6 +75,9 @@ pub struct ExportOptions {
     /// ASS subtitle file already escaped for a filtergraph (see
     /// [`escape_filter_path`]); burned in after scaling. `None` = no overlays.
     pub subtitles: Option<String>,
+    /// Directory of bundled fonts (escaped like `subtitles`) handed to libass
+    /// as `fontsdir`, so the Syne default renders without a system install.
+    pub fontsdir: Option<String>,
 }
 
 /// Escape a file path for use as a filter option value: forward slashes,
@@ -200,13 +203,67 @@ pub fn export_args(
     }
 
     let n = segments;
+    let timeline_end = cursor;
+
+    // Overlay video tracks: each clip scaled to `scale` x canvas width,
+    // faded by `opacity`, shifted to its timeline start and composited at its
+    // normalised centre while it is on screen. Inputs past the main track's
+    // end are skipped (they'd never show).
+    let mut overlay_steps = Vec::new();
+    let mut overlay_audio = Vec::new();
+    for it in project.overlay_video_clips() {
+        let ItemKind::Clip {
+            source,
+            source_in_ms,
+            volume,
+        } = &it.kind
+        else {
+            continue;
+        };
+        if it.start_ms >= timeline_end {
+            continue;
+        }
+        let info = sources
+            .get(source)
+            .ok_or_else(|| ExportError::UnknownSource(source.clone()))?;
+        let t = it.transform.unwrap_or_default().clamped();
+        let i = push_input(&mut args, source, *source_in_ms, it.duration_ms)?;
+        let ow = ((w as f32 * t.scale) as u32 / 2 * 2).max(2);
+        let start = secs(it.start_ms);
+        let end = secs(it.end_ms().min(timeline_end));
+        graph.push(format!(
+            "[{i}:v]scale={ow}:-2,setsar=1,fps={fps},format=yuva420p,colorchannelmixer=aa={:.3},setpts=PTS-STARTPTS+{start}/TB[o{i}]",
+            t.opacity
+        ));
+        overlay_steps.push((i, t, start, end));
+        if info.has_audio && !gif {
+            overlay_audio.push((i, *volume, it.start_ms));
+        }
+    }
+    let mut base = "cv0".to_string();
+    for (k, (i, t, start, end)) in overlay_steps.iter().enumerate() {
+        let Transform { x, y, .. } = t;
+        let next = format!("ov{k}");
+        graph.push(format!(
+            "[{base}][o{i}]overlay=x='{x:.4}*W-w/2':y='{y:.4}*H-h/2':enable='between(t,{start},{end})':eof_action=pass[{next}]"
+        ));
+        base = next;
+    }
+
     let sub = |from: &str, to: &str| match &opts.subtitles {
-        Some(f) => format!("[{from}]subtitles=filename={f}[{to}]"),
+        Some(f) => {
+            let fd = opts
+                .fontsdir
+                .as_ref()
+                .map(|d| format!(":fontsdir={d}"))
+                .unwrap_or_default();
+            format!("[{from}]subtitles=filename={f}{fd}[{to}]")
+        }
         None => format!("[{from}]null[{to}]"),
     };
     if gif {
         graph.push(format!("{concat_in}concat=n={n}:v=1:a=0[cv0]"));
-        graph.push(sub("cv0", "cv"));
+        graph.push(sub(&base, "cv"));
         graph.push("[cv]split[g1][g2];[g1]palettegen=stats_mode=diff[p];[g2][p]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle[out]".into());
         args.extend([
             "-filter_complex".into(),
@@ -218,10 +275,16 @@ pub fn export_args(
         ]);
     } else {
         graph.push(format!("{concat_in}concat=n={n}:v=1:a=1[cv0][ma]"));
-        graph.push(sub("cv0", "outv"));
+        graph.push(sub(&base, "outv"));
         // Audio-track clips: delayed to their timeline start and mixed under
         // the main track's audio (which sets the output length).
         let mut mix = vec!["[ma]".to_string()];
+        for (i, volume, d) in &overlay_audio {
+            graph.push(format!(
+                "[{i}:a]aresample=48000,volume={volume},aformat=channel_layouts=stereo,adelay={d}|{d}[m{i}]"
+            ));
+            mix.push(format!("[m{i}]"));
+        }
         for t in project
             .tracks
             .iter()
@@ -328,6 +391,87 @@ mod tests {
     fn graph(a: &[String]) -> &str {
         let i = a.iter().position(|x| x == "-filter_complex").unwrap();
         &a[i + 1]
+    }
+
+    #[test]
+    fn overlay_track_renders_as_pip_with_audio_and_fontsdir() {
+        let (mut p, mut s) = project();
+        let ov = p.add_track(TrackKind::Video, "Overlay");
+        let id = p
+            .add_item(
+                &ov,
+                500,
+                5000,
+                ItemKind::Clip {
+                    source: "cam.mp4".into(),
+                    source_in_ms: 250,
+                    volume: 0.8,
+                },
+            )
+            .unwrap();
+        p.add_item(
+            &ov,
+            9000,
+            500,
+            ItemKind::Clip {
+                source: "cam.mp4".into(),
+                source_in_ms: 0,
+                volume: 1.0,
+            },
+        )
+        .unwrap();
+        s.insert("cam.mp4".into(), SourceInfo { has_audio: true });
+        let opts = ExportOptions {
+            subtitles: Some("'subs.ass'".into()),
+            fontsdir: Some("'C\\:/fonts'".into()),
+        };
+        let a = export_args(
+            &p,
+            Preset::Landscape,
+            &s,
+            VideoEncoder::X264,
+            QualityTier::High,
+            &opts,
+            "o.mp4",
+        )
+        .unwrap();
+        let g = graph(&a);
+        assert!(a.join(" ").contains("-ss 0.250 -t 5.000 -i cam.mp4"));
+        // Default PiP: 35% of 1920 = 672 wide, bottom-right; clamped to the 3 s timeline.
+        assert!(g.contains("[2:v]scale=672:-2"), "{g}");
+        assert!(g.contains("setpts=PTS-STARTPTS+0.500/TB[o2]"));
+        assert!(g.contains("[cv0][o2]overlay=x='0.7800*W-w/2':y='0.7800*H-h/2':enable='between(t,0.500,3.000)':eof_action=pass[ov0]"));
+        assert!(g.contains("[ov0]subtitles=filename='subs.ass':fontsdir='C\\:/fonts'[outv]"));
+        assert!(g.contains("adelay=500|500[m2]"));
+        assert!(g.contains("amix=inputs=2"));
+        // The clip that starts after the main track ends is never added.
+        assert_eq!(a.iter().filter(|x| *x == "cam.mp4").count(), 1);
+
+        p.set_transform(
+            &id,
+            Some(Transform {
+                x: 0.25,
+                y: 0.25,
+                scale: 0.5,
+                opacity: 0.4,
+            }),
+        )
+        .unwrap();
+        let a = export_args(
+            &p,
+            Preset::Gif,
+            &s,
+            VideoEncoder::X264,
+            QualityTier::High,
+            &ExportOptions::default(),
+            "o.gif",
+        )
+        .unwrap();
+        let g = graph(&a);
+        assert!(g.contains("scale=240:-2") && g.contains("aa=0.400"));
+        assert!(g.contains("overlay=x='0.2500*W-w/2'"));
+        assert!(g.contains("[ov0]null[cv]"));
+        assert!(!g.contains("adelay"));
     }
 
     #[test]
@@ -495,6 +639,19 @@ mod tests {
             },
         )
         .unwrap();
+        // Picture-in-picture overlay track.
+        let ov = p.add_track(TrackKind::Video, "Overlay");
+        p.add_item(
+            &ov,
+            400,
+            1500,
+            ItemKind::Clip {
+                source: src.clone(),
+                source_in_ms: 0,
+                volume: 0.3,
+            },
+        )
+        .unwrap();
         let au = p.add_track(TrackKind::Audio, "A");
         p.add_item(
             &au,
@@ -521,8 +678,11 @@ mod tests {
                 .into_owned();
             let ass_path = dir.join(format!("subs-{preset:?}.ass"));
             std::fs::write(&ass_path, crate::ass::build_ass(&p, preset.size())).unwrap();
+            let fonts = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../app/src-tauri/resources/fonts");
             let opts = ExportOptions {
                 subtitles: Some(escape_filter_path(&ass_path.to_string_lossy())),
+                fontsdir: Some(escape_filter_path(&fonts.to_string_lossy())),
             };
             let a = export_args(
                 &p,
@@ -584,6 +744,7 @@ mod tests {
         s.insert("m.mp3".into(), SourceInfo { has_audio: true });
         let opts = ExportOptions {
             subtitles: Some(escape_filter_path(r"C:\tmp\s.ass")),
+            ..Default::default()
         };
         let a = export_args(
             &p,
