@@ -41,7 +41,7 @@ npm run typecheck && npm test && npm run build
 **Phase 1, scaffold (done, `scaffold/phase-1`).** Monorepo, ported ClipSmith core and import,
 project model, an editor shell with mock timeline, platform adapter, web GIF demo, CI.
 
-**Phase 2, a usable editor (v0.2, branch `feat/phase-2`).** Real playback from the project model; file and
+**Phase 2, a usable editor (done, `feat/phase-2`; phase 3 export overlays, snapping, filmstrips and first AI feature on `feat/phase-3`).** Real playback from the project model; file and
 link import; two video tracks plus audio and captions; trim, split, move and snapping;
 export through ffmpeg with presets; save and open `.msproj`.
 

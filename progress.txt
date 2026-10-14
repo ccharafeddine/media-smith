@@ -13,3 +13,21 @@ MediaSmith progress log
 
 Next: wire the real player to ms-project, file import + probe, ffmpeg export with
 presets, port GifSmith encoder and CaptionSmith whisper pipeline.
+
+2026-10-14 - Phase 2 (branch feat/phase-2)
+- Real editor store over the project model (add/move/trim/split/delete/undo),
+  live timeline + player, file import with probe, .msproj save/open, single-track
+  ffmpeg export with 9:16 / 16:9 / 1:1 / GIF presets. BYOK AI plan in docs/ai.md.
+
+2026-10-14 - Phase 3 (branch feat/phase-3)
+- Export: ffmpeg -progress parsing, progress bar + Cancel (kills ffmpeg), timeline
+  gaps render as black/silence so overlays stay in sync, caption + text layers
+  burned in via generated ASS (position, font, size, colour, stroke), audio track
+  delayed and mixed under the main audio (muted tracks skipped).
+- Timeline: snapping to item edges, the playhead and 0 (8 px at current zoom);
+  ClipSmith filmstrip thumbnails behind video clips (desktop).
+- ms-ai crate: OS keychain key storage (keyring), settings JSON without secrets,
+  one OpenAI-compatible client (OpenAI, Ollama, Gemini/Anthropic compat
+  endpoints), caption rewrite that keeps timestamps. Tests use a local mock
+  HTTP server. Settings > AI providers is real; Captions tool has AI rewrite
+  with preview/apply.
