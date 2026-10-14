@@ -1,5 +1,5 @@
 import type { FFmpeg } from "@ffmpeg/ffmpeg";
-import { gifArgs, type Platform } from "./types";
+import { gifArgs, safeName, type MediaRef, type Platform } from "./types";
 
 let ffmpeg: Promise<FFmpeg> | null = null;
 
@@ -15,19 +15,92 @@ export function loadFfmpeg(coreURL?: string, wasmURL?: string): Promise<FFmpeg> 
   return ffmpeg;
 }
 
+/** Imported Files live only for this tab; projects reference them as web:<n>. */
+const files = new Map<string, { file: File; url: string }>();
+let nextHandle = 0;
+
+export function registerFile(file: File): string {
+  const source = `web:${++nextHandle}`;
+  files.set(source, { file, url: URL.createObjectURL(file) });
+  return source;
+}
+
+function pickFiles(accept: string, multiple: boolean): Promise<File[]> {
+  return new Promise((resolve) => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = accept;
+    input.multiple = multiple;
+    input.onchange = () => resolve(Array.from(input.files ?? []));
+    input.addEventListener("cancel", () => resolve([]));
+    input.click();
+  });
+}
+
+function probeInBrowser(url: string): Promise<{ duration_secs: number; width: number; height: number }> {
+  return new Promise((resolve, reject) => {
+    const v = document.createElement("video");
+    v.preload = "metadata";
+    v.onloadedmetadata = () => resolve({ duration_secs: v.duration, width: v.videoWidth, height: v.videoHeight });
+    v.onerror = () => reject(new Error("This browser can't read that video"));
+    v.src = url;
+  });
+}
+
+function download(blob: Blob, name: string) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
+}
+
 function emptyProject(name: string, width: number, height: number, fps: number): string {
   const tracks = [
-    ["t1", "video", "Video 1"], ["t2", "video", "Video 2"], ["t3", "audio", "Audio"], ["t4", "caption", "Captions"],
+    ["t1", "video", "Video 1"], ["t2", "audio", "Audio"], ["t3", "caption", "Captions"],
   ].map(([id, kind, n]) => ({ id, kind, name: n, muted: false, items: [] }));
-  return JSON.stringify({ version: 1, name, canvas: { width, height, fps }, tracks, next_id: 4 }, null, 2);
+  return JSON.stringify({ version: 1, name, canvas: { width, height, fps }, tracks, next_id: 3 }, null, 2);
 }
 
 export const webPlatform: Platform = {
   kind: "web",
-  caps: { urlImport: false, hardwareEncode: false, transcribe: "wasm", maxInputBytes: 500 * 1024 * 1024 },
+  caps: { urlImport: false, hardwareEncode: false, transcribe: "wasm", maxInputBytes: 500 * 1024 * 1024, exportPresets: ["gif"] },
   newProject: async (name, w, h, fps) => emptyProject(name, w, h, fps),
   classifyUrl: async () => {
     throw new Error("Link import needs the desktop app (browsers block cross-site video fetches).");
+  },
+  async importMedia() {
+    const out: MediaRef[] = [];
+    for (const file of await pickFiles("video/*", true)) {
+      if (file.size > webPlatform.caps.maxInputBytes) throw new Error(`${file.name} is over 500 MB`);
+      const source = registerFile(file);
+      const m = await probeInBrowser(files.get(source)!.url);
+      out.push({ source, name: file.name, meta: { ...m, has_audio: true } });
+    }
+    return out;
+  },
+  mediaUrl: (source) => files.get(source)?.url ?? "",
+  async saveProject(json, name) {
+    const fname = safeName(name, "msproj");
+    download(new Blob([json], { type: "application/json" }), fname);
+    return fname;
+  },
+  async openProject() {
+    const [f] = await pickFiles(".msproj,.json", false);
+    return f ? f.text() : null;
+  },
+  async exportProject(json, preset, onProgress) {
+    if (preset !== "gif") throw new Error("MP4 export needs the desktop app; the web build exports GIF.");
+    const p = JSON.parse(json) as { name: string; tracks: { kind: string; items: { type: string; source: string; source_in_ms: number; duration_ms: number }[] }[] };
+    const clip = p.tracks.find((t) => t.kind === "video")?.items.find((i) => i.type === "clip");
+    const entry = clip && files.get(clip.source);
+    if (!clip || !entry) throw new Error("Import a clip first (web projects can't reopen files from a past session).");
+    const blob = (await webPlatform.toGif(entry.file, {
+      startSec: clip.source_in_ms / 1000, durationSec: Math.min(15, clip.duration_ms / 1000), width: 480, fps: 15,
+    }, onProgress)) as Blob;
+    const name = safeName(`${p.name}-gif`, "gif");
+    download(blob, name);
+    return name;
   },
   toGif: async (input, opts, onProgress) => {
     if (typeof input === "string") throw new Error("The web build takes a local File, not a path.");
