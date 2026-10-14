@@ -1,0 +1,8 @@
+node_modules/
+dist/
+target/
+app/src-tauri/gen/
+# Sidecars are fetched by scripts/fetch-*.sh, never committed.
+app/src-tauri/binaries/
+*.log
+.DS_Store
