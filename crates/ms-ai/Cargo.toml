@@ -1,0 +1,17 @@
+[package]
+name = "ms-ai"
+description = "MediaSmith bring-your-own-key AI: keychain storage, OpenAI-compatible client, caption rewrite"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+# Blocking client: calls run on a worker thread in the Tauri shell. native-tls
+# uses the OS TLS stack (schannel / Secure Transport), same as ClipSmith.
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "native-tls"] }
+# OS keychain. Without platform features keyring 3 silently uses a mock store,
+# so each platform's native backend is enabled explicitly.
+keyring = { version = "3", features = ["windows-native", "apple-native", "linux-native"] }
