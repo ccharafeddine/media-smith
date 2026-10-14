@@ -38,10 +38,10 @@ npm run typecheck && npm test && npm run build
 
 ## Roadmap
 
-**Phase 1, scaffold (this branch).** Monorepo, ported ClipSmith core and import,
+**Phase 1, scaffold (done, `scaffold/phase-1`).** Monorepo, ported ClipSmith core and import,
 project model, an editor shell with mock timeline, platform adapter, web GIF demo, CI.
 
-**Phase 2, a usable editor (v0.2).** Real playback from the project model; file and
+**Phase 2, a usable editor (v0.2, branch `feat/phase-2`).** Real playback from the project model; file and
 link import; two video tracks plus audio and captions; trim, split, move and snapping;
 export through ffmpeg with presets; save and open `.msproj`.
 
@@ -50,6 +50,13 @@ GIF export, CaptionSmith whisper captions with styles and word highlighting; cro
 
 **Phase 4, Design.** A Canva-style canvas: templates, text, shapes and stickers,
 thumbnails and cover frames, brand kit.
+
+**Phase 4b, bring-your-own-key AI.** Settings > AI providers (OpenAI, Gemini,
+Anthropic, OpenAI-compatible including local Ollama). Keys live in the OS keychain
+(`keyring` crate, never plain JSON), and requests go straight from the app to the
+provider. Features: AI thumbnails from chosen video frames as editable Design layers,
+title and description ideas, caption rewrite, best-moment clip picks. See
+[`docs/ai.md`](docs/ai.md), which also covers the web caveats (browser key storage, CORS).
 
 **Later.** Plugin API so future Smith tools drop in as modules, signed installers and
 updates, GPU preview compositor, macOS and Linux builds.
