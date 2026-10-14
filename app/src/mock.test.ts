@@ -1,20 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { DURATION, PRESETS, TOOLS, TRACKS } from "./mock";
+import { PRESET_SIZES } from "@mediasmith/platform";
+import { AI_PROVIDERS, PRESETS, TOOLS } from "./mock";
 
-describe("mock timeline", () => {
-  it("has the six tools in sidebar order", () => {
-    expect(TOOLS).toEqual(["Edit", "Clip", "GIF", "Captions", "Design", "Import"]);
+describe("catalogues", () => {
+  it("has the tools in sidebar order", () => {
+    expect(TOOLS).toEqual(["Edit", "Clip", "GIF", "Captions", "Design", "Import", "Settings"]);
   });
-  it("keeps every item inside the project and non-overlapping per track", () => {
-    for (const t of TRACKS) {
-      const items = [...t.items].sort((a, b) => a.start - b.start);
-      items.forEach((it, i) => {
-        expect(it.start + it.dur).toBeLessThanOrEqual(DURATION);
-        if (i > 0) expect(it.start).toBeGreaterThanOrEqual(items[i - 1].start + items[i - 1].dur);
-      });
-    }
+  it("preset sizes agree with the platform package", () => {
+    for (const p of PRESETS) expect([p.w, p.h]).toEqual(PRESET_SIZES[p.id]);
   });
-  it("has vertical presets for the social targets", () => {
-    expect(PRESETS.filter((p) => p.h > p.w).map((p) => p.id)).toEqual(["tiktok", "reels", "shorts"]);
+  it("lists the four BYOK provider families", () => {
+    expect(AI_PROVIDERS.map((p) => p.id)).toEqual(["openai", "gemini", "anthropic", "compatible"]);
   });
 });
