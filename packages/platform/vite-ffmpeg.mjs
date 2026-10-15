@@ -24,7 +24,7 @@ function load(root) {
   const parts = [];
   for (let i = 0; i * PART_BYTES < wasm.length; i++) parts.push(wasm.subarray(i * PART_BYTES, (i + 1) * PART_BYTES));
   const fontDir = join(dirname(fileURLToPath(import.meta.url)), "fonts");
-  const fonts = ["Inter.ttf", "Syne.ttf"].map((f) => [f, readFileSync(join(fontDir, f))]);
+  const fonts = ["Inter.ttf", "Syne-Regular.ttf", "Syne-Bold.ttf"].map((f) => [f, readFileSync(join(fontDir, f))]);
   const manifest = { core: "ffmpeg-core.js", parts: parts.map((_, i) => `ffmpeg-core.wasm.part${i}`), bytes: wasm.length, fonts: fonts.map((f) => f[0]) };
   return { core, parts, manifest, fonts };
 }

@@ -62,14 +62,17 @@ describe("AI providers", () => {
 });
 
 describe("captions api", () => {
-  it("parses the missing-model error and is desktop-only", async () => {
+  it("parses the missing-model error; the browser uses its built-in Whisper", async () => {
     const { missingModel } = await import("./types");
     expect(missingModel(new Error("MODEL_NOT_FOUND|ggml-base.en.bin"))).toBe("ggml-base.en.bin");
     expect(missingModel("boom")).toBeNull();
     expect(getPlatform({ __TAURI_INTERNALS__: {} }).captions.available).toBe(true);
     const web = getPlatform({}).captions;
-    expect(web.available).toBe(false);
-    await expect(web.autoCaption("{}", null, null)).rejects.toThrow(/desktop/);
-    expect(await web.models()).toEqual([]);
+    expect(web.available).toBe(true);
+    expect((await web.models()).map((m) => [m.file, m.installed])).toEqual([["whisper-base", true]]);
+    const empty = JSON.stringify({ tracks: [{ id: "t1", kind: "video", items: [] }] });
+    await expect(web.autoCaption(empty, null, null)).rejects.toThrow(/Add a clip/);
+    await expect(web.autoCaption(empty, null, null, undefined, true)).rejects.toThrow(/desktop/);
+    await expect(web.downloadDiarization()).rejects.toThrow(/desktop/);
   });
 });

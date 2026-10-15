@@ -54,3 +54,18 @@ export function loadFfmpeg(onLoad?: (ratio: number) => void): Promise<FFmpeg> {
   ffmpeg.catch(() => (ffmpeg = null));
   return ffmpeg;
 }
+
+/** Absolute URL of the app's static root (for same-origin models). */
+export function siteRoot(): string {
+  return new URL(base, location.href).href;
+}
+
+/** Stop whatever ffmpeg is running by terminating the engine; the next use
+ *  reloads it (the wasm parts come from the HTTP cache). */
+export function resetFfmpeg(): boolean {
+  const f = ffmpeg;
+  if (!f) return false;
+  ffmpeg = null;
+  void f.then((x) => x.terminate()).catch(() => undefined);
+  return true;
+}

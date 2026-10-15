@@ -11,3 +11,6 @@ dist-site/
 
 # Committed, ready-to-host web build (see docs/hosting.md)
 !web/dist/
+
+# Browser Whisper model, fetched by scripts/fetch-whisper-web.sh
+app/.whisper-web/

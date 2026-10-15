@@ -3,14 +3,16 @@
 Each Smith app has a standalone static build for its own subdomain root. All four
 use only static files: no server, no CDN, no uploads.
 
-| Site | Build command (in the MediaSmith repo) | Output | Also committed at |
+| Site | Repo | Build command | Output (committed) |
 |---|---|---|---|
-| media.chafic.me | `SMITH_SITE=media npm run build -w @mediasmith/app` | `app/dist-site/media/` | MediaSmith `web/dist/` |
-| clip.chafic.me | `SMITH_SITE=clip npm run build -w @mediasmith/smiths-web` | `apps/smiths-web/dist-site/clip/` | ClipSmith `web/dist/` |
-| gif.chafic.me | `SMITH_SITE=gif npm run build -w @mediasmith/smiths-web` | `apps/smiths-web/dist-site/gif/` | GifSmith `web/dist/` |
-| caption.chafic.me | `SMITH_SITE=caption npm run build -w @mediasmith/smiths-web` | `apps/smiths-web/dist-site/caption/` | CaptionSmith `web/dist/` |
+| media.chafic.me | MediaSmith | `sh scripts/fetch-whisper-web.sh && SMITH_SITE=media npm run build -w @mediasmith/app`, then copy `app/dist-site/media/` | `web/dist/` |
+| clip.chafic.me | ClipSmith | `npm run build:web` | `web/dist/` |
+| gif.chafic.me | GifSmith | `npm run build:web` | `web/dist/` |
+| caption.chafic.me | CaptionSmith | `npm run build:web` | `web/dist/` |
 
-On Windows PowerShell, run `$env:SMITH_SITE="clip"; npm run build -w @mediasmith/smiths-web`.
+Each demo is built from its app's own SolidJS frontend, so it has the same interface as the desktop app. MediaSmith picks its platform adapter at runtime (`packages/platform/src/web.ts`). ClipSmith, GifSmith and CaptionSmith alias `@tauri-apps/*` to a `web/shim/` that runs their Rust commands in the browser (`web/commands.ts`). `apps/smiths-web`, the earlier simplified single-page demos, is superseded and no longer deployed.
+
+On Windows PowerShell, run `$env:SMITH_SITE="media"; npm run build -w @mediasmith/app`.
 
 ## What each build contains
 
@@ -23,10 +25,13 @@ On Windows PowerShell, run `$env:SMITH_SITE="clip"; npm run build -w @mediasmith
   - the wasm split into `ffmpeg-core.wasm.part0` (20 MiB) and `part1` (10.7 MiB);
   - `fonts/`;
   - `manifest.json`.
-- `assets/`, the hashed JS, CSS, fonts and sample clip.
+- `assets/`, the hashed JS, CSS and fonts.
+- `models/`, only where the demo runs a model: Whisper base for MediaSmith and
+  CaptionSmith (the decoder is split into `.partN` files listed in `.parts`), and
+  the Auto-Reframe detectors for ClipSmith (`ort/` holds their runtime).
 
-Every build is about 33 MB. The largest single file is 20 MiB, under the Cloudflare
-25 MiB per-file limit.
+Builds are 32 MB (GifSmith), 48 MB (ClipSmith) and about 130 MB (CaptionSmith, MediaSmith).
+No single file is over 21 MiB, under the Cloudflare 25 MiB per-file limit.
 
 ## Required headers
 
@@ -48,17 +53,17 @@ COOP/COEP headers too, so linking to the subdomain is simpler.
 
 The only place a build names a domain is the absolute meta in `index.html` and `404.html`:
 `<link rel="canonical">`, `og:url`, `og:image` and `twitter:image`. By default they point at
-the chafic.me subdomain from `packages/ui/src/sites.mjs` (for example `https://clip.chafic.me/`
+the chafic.me subdomain (`packages/ui/src/sites.mjs` here, `web/site.json` in the sibling repos) (for example `https://clip.chafic.me/`
 and `https://clip.chafic.me/og.png`), and the committed `web/dist` builds use that default.
 
 To host a build somewhere else, set `SMITH_SITE_URL` to the site's public URL when you build:
 
 ```sh
-SMITH_SITE=clip SMITH_SITE_URL=https://clips.example.com npm run build -w @mediasmith/smiths-web
 SMITH_SITE=media SMITH_SITE_URL=https://video.example.com/ npm run build -w @mediasmith/app
+SMITH_SITE_URL=https://clips.example.com npm run build:web   # in ClipSmith, GifSmith or CaptionSmith
 ```
 
-On Windows PowerShell: `="clip"; ="https://clips.example.com"; npm run build -w @mediasmith/smiths-web`
+On Windows PowerShell: `$env:SMITH_SITE_URL="https://clips.example.com"; npm run build:web`
 (then `Remove-Item Env:SMITH_SITE_URL` to go back to the default).
 
 - It must be an absolute `http(s)` URL with no query or fragment; a trailing `/` is added if missing.

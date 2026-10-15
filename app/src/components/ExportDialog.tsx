@@ -52,7 +52,7 @@ export function ExportDialog(props: {
         <Show when={err()}>{(e) => <div class="sm-toast sm-toast--err">{e()}</div>}</Show>
         <div class="row end">
           <Show when={props.progress !== null} fallback={<button class="sm-btn" onClick={props.onClose}>{done() ? "Done" : "Cancel"}</button>}>
-            <Show when={props.platform.kind === "desktop"}><button class="sm-btn" onClick={() => void props.platform.cancelExport()}>Stop</button></Show>
+            <button class="sm-btn" onClick={() => void props.platform.cancelExport()}>Stop</button>
           </Show>
           <button class="sm-btn sm-btn--primary sm-btn--lg" disabled={props.progress !== null || props.durationMs === 0} onClick={go}>⇪ Export {ext().toUpperCase()}</button>
         </div>

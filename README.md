@@ -60,7 +60,7 @@ Both builds are static. They use ffmpeg.wasm with local files only: no server an
 | Build | Command | Output |
 |---|---|---|
 | Editor | `npm run build -w @mediasmith/app` | `app/dist/` (~33 MB) |
-| ClipSmith, GifSmith, CaptionSmith demos | `npm run build -w @mediasmith/smiths-web` | `apps/smiths-web/dist/` (~33 MB) |
+| ClipSmith, GifSmith, CaptionSmith demos | `npm run build:web` in each app's repo (its own UI) | that repo's `web/dist/` |
 
 The ~31 MiB wasm core is split into parts under Cloudflare's 25 MiB per-file
 limit and joined at runtime. [`docs/web.md`](docs/web.md) lists what works in the
@@ -96,7 +96,7 @@ packages/
   ui/           Smith design system v2: tokens, sm- components, brand marks, fonts, sample clip
   platform/     platform adapter: Tauri invoke on desktop, ffmpeg.wasm in a browser
 apps/
-  smiths-web/   static browser demos of ClipSmith, GifSmith, CaptionSmith (ffmpeg.wasm)
+  smiths-web/   earlier simplified demos (superseded; each app now builds its own web demo)
 docs/           design mockups, web feasibility notes
 scripts/        sidecar fetchers (ffmpeg, yt-dlp); binaries are gitignored
 ```
