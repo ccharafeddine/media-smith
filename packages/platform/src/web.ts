@@ -124,6 +124,8 @@ export const webPlatform: Platform = {
     deleteModel: async () => { throw new Error(CAP_WEB); },
     autoCaption: async () => { throw new Error(CAP_WEB); },
     cancel: async () => undefined,
+    diarizationStatus: async () => ({ models: false, engine: false }),
+    downloadDiarization: async () => { throw new Error(CAP_WEB); },
   },
   toGif: async (input, opts, onProgress) => {
     if (typeof input === "string") throw new Error("The web build takes a local File, not a path.");

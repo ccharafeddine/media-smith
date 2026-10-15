@@ -96,6 +96,12 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 /* phase 4: canvas layers + inspector */
 .text-layer { position: absolute; transform: translate(-50%, -50%); white-space: pre-wrap; text-align: center; font-weight: 700; line-height: 1.1; cursor: pointer; paint-order: stroke fill; max-width: 92%; }
 .text-layer.sel { outline: 1px dashed var(--track-caption); outline-offset: 4px; }
+.text-layer { cursor: grab; user-select: none; touch-action: none; }
+.text-layer.dragging { cursor: grabbing; }
+.snap-guide { position: absolute; pointer-events: none; background: var(--track-caption); opacity: 0.8; z-index: 5; }
+.snap-guide.v { left: 50%; top: 0; bottom: 0; width: 1px; }
+.snap-guide.h { top: 50%; left: 0; right: 0; height: 1px; }
+.spk { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
 .overlay-video { position: absolute; transform: translate(-50%, -50%); border-radius: 6px; pointer-events: none; }
 .inspector { display: flex; flex-direction: column; gap: 6px; }
 .inspector textarea, .inspector input[type="number"] { width: 100%; }

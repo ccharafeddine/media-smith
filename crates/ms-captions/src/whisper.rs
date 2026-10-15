@@ -30,6 +30,9 @@ pub struct Segment {
     pub text: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub words: Option<Vec<Word>>,
+    /// Speaker index set by [`crate::diarize::assign_speakers`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speaker: Option<u32>,
 }
 
 #[derive(Debug, thiserror::Error, PartialEq)]
@@ -186,6 +189,7 @@ pub fn parse_segments(json: &str, want_words: bool) -> Result<Vec<Segment>, Stri
                 end_ms: ms_at(seg, "/offsets/to"),
                 text,
                 words,
+                speaker: None,
             })
         })
         .collect())

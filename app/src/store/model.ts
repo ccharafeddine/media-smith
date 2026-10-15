@@ -4,12 +4,15 @@
 
 export type TrackKind = "video" | "audio" | "text" | "caption";
 
-export interface TextStyle { font: string; size_px: number; color: string; stroke: string | null; x: number; y: number }
+export interface TextStyle { font: string; size_px: number; color: string; stroke: string | null; x: number; y: number; highlight?: string | null }
+
+/** A spoken word, relative to its caption item's start (mirrors ms-project CaptionWord). */
+export interface CaptionWord { start_ms: number; end_ms: number; text: string }
 
 export type ItemKind =
   | { type: "clip"; source: string; source_in_ms: number; volume: number }
   | { type: "text"; text: string; style: TextStyle }
-  | { type: "caption"; text: string; style: TextStyle };
+  | { type: "caption"; text: string; style: TextStyle; words?: CaptionWord[]; speaker?: number | null };
 
 /** Placement of a clip on an overlay video track (mirrors ms-project Transform). */
 export interface Transform { x: number; y: number; scale: number; opacity: number }
@@ -297,4 +300,74 @@ export function overlaysAt(p: Project, t: number): { item: Item & { type: "clip"
     .flatMap((tr) => tr.items)
     .filter((i): i is Item & { type: "clip" } => i.type === "clip" && t >= i.start_ms && t < endMs(i))
     .map((item) => ({ item, sourceMs: item.source_in_ms + (t - item.start_ms), transform: item.transform ?? DEFAULT_TRANSFORM }));
+}
+
+// ---- Phase 5: canvas dragging, karaoke, speakers ----
+
+/** Snap guides (normalised) and their pull distance in canvas px. */
+export const SNAP_GUIDES = [0.5];
+export const SNAP_PX = 6;
+
+/** New normalised centre for a text layer dragged by (dx, dy) canvas px on a
+ *  w×h canvas. Snaps to the centre lines within SNAP_PX unless `free`
+ *  (Alt held); returns which guides are active for drawing. */
+export function dragPosition(
+  start: { x: number; y: number }, dx: number, dy: number, w: number, h: number, free = false,
+): { x: number; y: number; snapX: boolean; snapY: boolean } {
+  let x = clamp(start.x + dx / Math.max(1, w), 0, 1);
+  let y = clamp(start.y + dy / Math.max(1, h), 0, 1);
+  let snapX = false, snapY = false;
+  if (!free) {
+    for (const g of SNAP_GUIDES) {
+      if (Math.abs(x - g) * w <= SNAP_PX) { x = g; snapX = true; }
+      if (Math.abs(y - g) * h <= SNAP_PX) { y = g; snapY = true; }
+    }
+  }
+  return { x, y, snapX, snapY };
+}
+
+/** Karaoke pieces of a caption at timeline time `t`: each word and whether
+ *  it has been reached (matches libass \\k: a word lights at its start and
+ *  stays lit). Null when the item has no word timings. */
+export function karaokeWords(it: Item, t: number): { text: string; lit: boolean }[] | null {
+  if (it.type !== "caption" || !it.words?.length) return null;
+  const rel = t - it.start_ms;
+  return it.words.map((w) => ({ text: w.text, lit: rel >= w.start_ms }));
+}
+
+/** Per-speaker colours; MUST match ms-captions diarize::SPEAKER_PALETTE. */
+export const SPEAKER_PALETTE = ["#45f2f2", "#a974ff", "#ffd24d", "#6ee27a", "#ff7a7a", "#7ab8ff", "#ff9de0", "#ffa94d"];
+export const speakerColor = (i: number) => SPEAKER_PALETTE[((i % SPEAKER_PALETTE.length) + SPEAKER_PALETTE.length) % SPEAKER_PALETTE.length];
+
+/** Distinct speakers present on caption items, ascending. */
+export function speakers(p: Project): number[] {
+  const set = new Set<number>();
+  for (const c of captions(p)) if (c.speaker != null) set.add(c.speaker);
+  return [...set].sort((a, b) => a - b);
+}
+
+/** Apply a style patch to every caption (e.g. turn karaoke on/off). */
+export function styleAllCaptions(p: Project, patch: Partial<TextStyle>): Project {
+  if (!captions(p).length) throw new EditError("No captions to style");
+  return transact(p, (q) => {
+    for (const t of q.tracks) for (const i of t.items) if (i.type === "caption") i.style = { ...i.style, ...patch };
+  });
+}
+
+/** Colour each diarized caption by its speaker (unlabelled ones untouched). */
+export function colorBySpeaker(p: Project): Project {
+  if (!speakers(p).length) throw new EditError("No speakers detected yet");
+  return transact(p, (q) => {
+    for (const t of q.tracks) for (const i of t.items) if (i.type === "caption" && i.speaker != null) i.style = { ...i.style, color: speakerColor(i.speaker) };
+  });
+}
+
+/** Reassign one caption to another speaker (or clear with null). */
+export function setSpeaker(p: Project, id: string, speaker: number | null): Project {
+  const { ti, ii } = locate(p, id);
+  if (p.tracks[ti].items[ii].type !== "caption") throw new EditError("Only captions have speakers");
+  return transact(p, (q) => {
+    const it = q.tracks[ti].items[ii] as Item & { type: "caption" };
+    if (speaker == null) delete it.speaker; else it.speaker = Math.max(0, Math.round(speaker));
+  });
 }

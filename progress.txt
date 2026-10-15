@@ -47,3 +47,20 @@ presets, port GifSmith encoder and CaptionSmith whisper pipeline.
 - Syne (OFL) bundled as a resource and passed to libass via fontsdir.
   externalBin: ffmpeg, ffprobe, yt-dlp, whisper-cli; scripts/fetch-whisper.sh
   (static CMake build), fetch-sidecars.sh, placeholder-sidecars.sh for CI.
+
+2026-10-14 - Phase 5 (branch feat/phase-5)
+- Karaoke captions: whisper word timings now survive onto caption items
+  (item-relative CaptionWord list); TextStyle.highlight turns on libass \k
+  word sweeps in export and a matching live preview. Captions tool toggle +
+  highlight colour.
+- Diarization: ms-captions::diarize (ported from CaptionSmith): sherpa-onnx
+  sidecar runner with cancel, turn parsing, majority-overlap alignment
+  (word-level), first-appearance renumbering, SHA-256-verified model download.
+  Auto-caption "Detect speakers" option; speaker chips, per-caption speaker
+  picker, "Colour captions by speaker".
+- Canvas: drag text/caption layers to move (one undo step on release), centre
+  snap guides (Alt = free), Esc cancels, arrow-key nudge (Shift = 10 px).
+- BYO-key AI verified: mock-server client tests + real Windows Credential
+  Manager round trip (MS_KEYCHAIN_TEST=1).
+- Gaps: sherpa-onnx sidecar not yet in externalBin (checkbox disabled when
+  absent); diarization untested on real audio; no real AI key test.

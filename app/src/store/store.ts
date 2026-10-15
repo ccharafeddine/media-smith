@@ -61,6 +61,11 @@ export function createEditor(initial: M.Project = M.newProject()) {
     },
     updateText: (id: string, patch: M.TextPatch) => apply((p) => M.updateText(p, id, patch)),
     setTransform: (id: string, t: M.Transform | null) => apply((p) => M.setTransform(p, id, t)),
+    /** Commit a canvas drag of a text/caption layer (one undo step). */
+    moveText: (id: string, x: number, y: number) => apply((p) => M.updateText(p, id, { style: { x, y } })),
+    styleAllCaptions: (patch: Partial<M.TextStyle>) => apply((p) => M.styleAllCaptions(p, patch)),
+    colorBySpeaker: () => apply((p) => M.colorBySpeaker(p)),
+    setSpeaker: (id: string, s: number | null) => apply((p) => M.setSpeaker(p, id, s)),
     /** Replace the whole project in one undoable step (e.g. after Auto-caption). */
     replace: (next: M.Project) => apply(() => (M.validate(next), next)),
     /** "+ Text" at the playhead on the first text track (created if missing). */

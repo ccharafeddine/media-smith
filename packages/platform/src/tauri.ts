@@ -90,15 +90,28 @@ export const tauriPlatform: Platform = {
     },
     cancelDownload: () => invoke<void>("cancel_caption_model"),
     deleteModel: (file) => invoke<void>("delete_caption_model", { file }),
-    async autoCaption(json, model, language, onProgress) {
+    async autoCaption(json, model, language, onProgress, speakers = false) {
       const unlisten = await listen<{ ratio: number }>("caption-progress", (e) => onProgress?.(e.payload.ratio));
       try {
-        return await invoke<string>("auto_caption", { json, model, language });
+        return await invoke<string>("auto_caption", { json, model, language, speakers });
       } finally {
         unlisten();
       }
     },
     cancel: () => invoke<void>("cancel_auto_caption"),
+    async diarizationStatus() {
+      const [models, engine] = await invoke<[boolean, boolean]>("diarization_status");
+      return { models, engine };
+    },
+    async downloadDiarization(onProgress) {
+      const unlisten = await listen<{ step: number; label: string; received: number; total: number | null }>("diarize-download-progress", (e) =>
+        onProgress?.(e.payload.total ? (e.payload.step - 1 + e.payload.received / e.payload.total) / 2 : null, e.payload.label));
+      try {
+        await invoke<void>("download_diarization_models");
+      } finally {
+        unlisten();
+      }
+    },
   },
   toGif: async () => {
     throw new Error("On desktop, use Export with the GIF preset.");

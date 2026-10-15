@@ -3,7 +3,7 @@
 //! Every item becomes one Dialogue event with inline overrides for position,
 //! font, size, colour and stroke; times are timeline times.
 
-use ms_project::{ItemKind, Project, TextStyle, TrackKind};
+use ms_project::{CaptionWord, ItemKind, Project, TextStyle, TrackKind};
 
 /// `#rrggbb` → ASS `&H00BBGGRR` (alpha 00 = opaque). Bad input → white.
 pub fn ass_color(hex: &str) -> String {
@@ -37,15 +37,23 @@ pub fn ass_escape(text: &str) -> String {
         .replace('\n', "\\N")
 }
 
-fn overrides(style: &TextStyle, scale: f64, (w, h): (u32, u32)) -> String {
+fn overrides(style: &TextStyle, scale: f64, (w, h): (u32, u32), karaoke: bool) -> String {
     let x = (style.x.clamp(0.0, 1.0) as f64 * w as f64).round();
     let y = (style.y.clamp(0.0, 1.0) as f64 * h as f64).round();
     let fs = (style.size_px as f64 * scale).round().max(1.0);
     let font = style.font.replace(['{', '}', '\\'], "");
-    let mut o = format!(
-        "{{\\an5\\pos({x},{y})\\fn{font}\\fs{fs}\\1c{}",
-        ass_color(&style.color)
-    );
+    let mut o = match (&style.highlight, karaoke) {
+        // \k sweeps each word from SecondaryColour (\2c) to PrimaryColour (\1c).
+        (Some(hl), true) => format!(
+            "{{\\an5\\pos({x},{y})\\fn{font}\\fs{fs}\\1c{}\\2c{}",
+            ass_color(hl),
+            ass_color(&style.color)
+        ),
+        _ => format!(
+            "{{\\an5\\pos({x},{y})\\fn{font}\\fs{fs}\\1c{}",
+            ass_color(&style.color)
+        ),
+    };
     match &style.stroke {
         Some(c) => o.push_str(&format!(
             "\\3c{}\\bord{}",
@@ -56,6 +64,33 @@ fn overrides(style: &TextStyle, scale: f64, (w, h): (u32, u32)) -> String {
     }
     o.push_str("\\shad0}");
     o
+}
+
+/// Karaoke body: `{\\kN}` per word in centiseconds. Each word's duration
+/// runs to the next word's start so pauses keep the previous word lit; a
+/// leading empty `\\k` covers the silence before the first word.
+pub fn karaoke_text(words: &[CaptionWord]) -> String {
+    let cs = |ms: u64| ms.div_ceil(10).max(1);
+    let mut out = String::new();
+    if let Some(first) = words.first() {
+        if first.start_ms >= 10 {
+            out.push_str(&format!("{{\\k{}}}", first.start_ms / 10));
+        }
+    }
+    for (i, w) in words.iter().enumerate() {
+        let until = words
+            .get(i + 1)
+            .map_or(w.end_ms, |n| n.start_ms.max(w.start_ms));
+        if i > 0 {
+            out.push(' ');
+        }
+        out.push_str(&format!(
+            "{{\\k{}}}{}",
+            cs(until.saturating_sub(w.start_ms)),
+            ass_escape(&w.text)
+        ));
+    }
+    out
 }
 
 /// Render `project`'s caption and text tracks for an output of `size`.
@@ -73,16 +108,25 @@ Style: Default,Arial,48,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,-1,0,0,0,100
     for (layer, kind) in [(0, TrackKind::Text), (1, TrackKind::Caption)] {
         for t in project.tracks.iter().filter(|t| t.kind == kind && !t.muted) {
             for it in &t.items {
-                let (ItemKind::Text { text, style } | ItemKind::Caption { text, style }) = &it.kind
-                else {
-                    continue;
+                let (text, style, words): (&String, &TextStyle, &[CaptionWord]) = match &it.kind {
+                    ItemKind::Text { text, style } => (text, style, &[]),
+                    ItemKind::Caption {
+                        text, style, words, ..
+                    } => (text, style, words),
+                    _ => continue,
+                };
+                let karaoke = style.highlight.is_some() && !words.is_empty();
+                let body = if karaoke {
+                    karaoke_text(words)
+                } else {
+                    ass_escape(text)
                 };
                 out.push_str(&format!(
                     "Dialogue: {layer},{},{},Default,,0,0,0,,{}{}\n",
                     ass_time(it.start_ms),
                     ass_time(it.end_ms()),
-                    overrides(style, scale, size),
-                    ass_escape(text)
+                    overrides(style, scale, size, karaoke),
+                    body
                 ));
             }
         }
@@ -127,6 +171,8 @@ mod tests {
             ItemKind::Caption {
                 text: "hi {there}".into(),
                 style: TextStyle::default(),
+                words: vec![],
+                speaker: None,
             },
         )
         .unwrap();
@@ -152,5 +198,45 @@ mod tests {
         assert!(s.contains("Dialogue: 0,0:00:00.00,0:00:00.50"));
         assert!(s.contains("\\bord0"));
         assert!(!has_overlays(&Project::new("e", 1, 1, 1)));
+    }
+
+    #[test]
+    fn karaoke_timing_and_colours() {
+        let w = |s, e, t: &str| CaptionWord {
+            start_ms: s,
+            end_ms: e,
+            text: t.into(),
+        };
+        assert_eq!(
+            karaoke_text(&[w(200, 500, "Hi"), w(700, 900, "{you}")]),
+            "{\\k20}{\\k50}Hi {\\k20}(you)"
+        );
+        assert_eq!(karaoke_text(&[w(0, 5, "a")]), "{\\k1}a");
+        let mut p = Project::new("t", 100, 100, 30);
+        let c = p.add_track(TrackKind::Caption, "C");
+        p.add_item(
+            &c,
+            0,
+            1000,
+            ItemKind::Caption {
+                text: "Hi you".into(),
+                style: TextStyle {
+                    highlight: Some("#ffd400".into()),
+                    ..Default::default()
+                },
+                words: vec![w(0, 400, "Hi"), w(400, 900, "you")],
+                speaker: None,
+            },
+        )
+        .unwrap();
+        let s = build_ass(&p, (100, 100));
+        assert!(s.contains("\\1c&H0000D4FF\\2c&H00FFFFFF"), "{s}");
+        assert!(s.ends_with("{\\k40}Hi {\\k50}you\n"), "{s}");
+        // Highlight without word timings falls back to plain text.
+        if let ItemKind::Caption { words, .. } = &mut p.tracks[0].items[0].kind {
+            words.clear();
+        }
+        let s = build_ass(&p, (100, 100));
+        assert!(!s.contains("\\k") && !s.contains("\\2c") && s.ends_with("Hi you\n"));
     }
 }

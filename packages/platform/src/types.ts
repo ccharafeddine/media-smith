@@ -117,8 +117,17 @@ export interface CaptionsApi {
   cancelDownload(): Promise<void>;
   deleteModel(file: string): Promise<void>;
   /** Transcribe the main track and return the project JSON with its caption track replaced. */
-  autoCaption(json: string, model: string | null, language: string | null, onProgress?: (ratio: number) => void): Promise<string>;
+  autoCaption(json: string, model: string | null, language: string | null, onProgress?: (ratio: number) => void, speakers?: boolean): Promise<string>;
   cancel(): Promise<void>;
+  /** Speaker detection: are the models downloaded and the engine bundled? */
+  diarizationStatus(): Promise<{ models: boolean; engine: boolean }>;
+  /** Download + verify the two speaker-detection models (~46 MB). */
+  downloadDiarization(onProgress?: (ratio: number | null, label: string) => void): Promise<void>;
+}
+
+/** "DIARIZE_MODELS_MISSING|<dir>" means the speaker models need downloading. */
+export function missingDiarization(err: unknown): boolean {
+  return String(err instanceof Error ? err.message : err).startsWith("DIARIZE_MODELS_MISSING|");
 }
 
 /** "MODEL_NOT_FOUND|<file>" from the shell means the model needs downloading. */

@@ -46,6 +46,30 @@ pub struct TextStyle {
     /// Normalised 0..1 position of the text box centre.
     pub x: f32,
     pub y: f32,
+    /// Karaoke highlight colour: when set and the item has word timings, each
+    /// word switches from `color` to this as it is spoken.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub highlight: Option<String>,
+}
+
+/// One spoken word of a caption, relative to the item's start so the timing
+/// survives moving the item on the timeline.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CaptionWord {
+    pub start_ms: u64,
+    pub end_ms: u64,
+    pub text: String,
+}
+
+/// A caption cue to place with [`Project::replace_caption_cues`].
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct CaptionCue {
+    pub start_ms: u64,
+    pub duration_ms: u64,
+    pub text: String,
+    /// Word timings in timeline milliseconds (converted to item-relative).
+    pub words: Vec<CaptionWord>,
+    pub speaker: Option<u32>,
 }
 
 impl Default for TextStyle {
@@ -57,6 +81,7 @@ impl Default for TextStyle {
             stroke: Some("#000000".into()),
             x: 0.5,
             y: 0.82,
+            highlight: None,
         }
     }
 }
@@ -77,6 +102,12 @@ pub enum ItemKind {
     Caption {
         text: String,
         style: TextStyle,
+        /// Word timings (item-relative) for karaoke highlighting.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        words: Vec<CaptionWord>,
+        /// Diarized speaker index (0-based), when speakers were detected.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        speaker: Option<u32>,
     },
 }
 
@@ -360,12 +391,32 @@ impl Project {
     }
 
     /// Replace every item on a caption track with `items` (start, duration,
-    /// text), using the default style. Overlapping or empty entries are
-    /// dropped. Returns the number placed.
+    /// text), using `style`. Overlapping or empty entries are dropped.
+    /// Returns the number placed.
     pub fn replace_captions(
         &mut self,
         track: &str,
         items: &[(u64, u64, String)],
+        style: &TextStyle,
+    ) -> Result<usize, ProjectError> {
+        let cues: Vec<CaptionCue> = items
+            .iter()
+            .map(|(s, d, t)| CaptionCue {
+                start_ms: *s,
+                duration_ms: *d,
+                text: t.clone(),
+                ..Default::default()
+            })
+            .collect();
+        self.replace_caption_cues(track, &cues, style)
+    }
+
+    /// Like [`Self::replace_captions`] but keeps word timings (made relative
+    /// to each item and clipped to it) and speaker labels.
+    pub fn replace_caption_cues(
+        &mut self,
+        track: &str,
+        cues: &[CaptionCue],
         style: &TextStyle,
     ) -> Result<usize, ProjectError> {
         if self.track_mut(track)?.kind != TrackKind::Caption {
@@ -373,23 +424,36 @@ impl Project {
         }
         let mut placed = Vec::new();
         let mut cursor = 0u64;
-        for (start, dur, text) in items {
-            let text = text.trim();
-            if *dur == 0 || text.is_empty() || *start < cursor {
+        for c in cues {
+            let text = c.text.trim();
+            if c.duration_ms == 0 || text.is_empty() || c.start_ms < cursor {
                 continue;
             }
+            let end = c.start_ms + c.duration_ms;
+            let words = c
+                .words
+                .iter()
+                .filter(|w| !w.text.trim().is_empty() && w.end_ms > c.start_ms && w.start_ms < end)
+                .map(|w| CaptionWord {
+                    start_ms: w.start_ms.max(c.start_ms) - c.start_ms,
+                    end_ms: w.end_ms.min(end) - c.start_ms,
+                    text: w.text.trim().into(),
+                })
+                .collect();
             let id = self.fresh_id("i");
             placed.push(Item {
                 id,
-                start_ms: *start,
-                duration_ms: *dur,
+                start_ms: c.start_ms,
+                duration_ms: c.duration_ms,
                 kind: ItemKind::Caption {
                     text: text.into(),
                     style: style.clone(),
+                    words,
+                    speaker: c.speaker,
                 },
                 transform: None,
             });
-            cursor = start + dur;
+            cursor = end;
         }
         let n = placed.len();
         self.track_mut(track)?.items = placed;
@@ -503,6 +567,8 @@ mod tests {
             ItemKind::Caption {
                 text: "old".into(),
                 style: TextStyle::default(),
+                words: vec![],
+                speaker: None,
             },
         )
         .unwrap();
@@ -555,6 +621,8 @@ mod tests {
             ItemKind::Caption {
                 text: "hello".into(),
                 style: TextStyle::default(),
+                words: vec![],
+                speaker: None,
             },
         )
         .unwrap();
@@ -739,5 +807,54 @@ mod tests {
         assert_eq!(gone.id, a);
         assert_eq!(p.main_video_clips().len(), 1);
         assert!(p.delete_item(&a).is_err());
+    }
+
+    #[test]
+    fn caption_cues_keep_relative_words_and_speaker() {
+        let mut p = Project::new("t", 1080, 1920, 30);
+        let c = p.add_track(TrackKind::Caption, "C");
+        let w = |s, e, t: &str| CaptionWord {
+            start_ms: s,
+            end_ms: e,
+            text: t.into(),
+        };
+        let n = p
+            .replace_caption_cues(
+                &c,
+                &[CaptionCue {
+                    start_ms: 1000,
+                    duration_ms: 1000,
+                    text: "hey you".into(),
+                    words: vec![
+                        w(900, 1300, "hey"),
+                        w(1400, 2500, "you"),
+                        w(2600, 2700, "x"),
+                    ],
+                    speaker: Some(1),
+                }],
+                &TextStyle::default(),
+            )
+            .unwrap();
+        assert_eq!(n, 1);
+        let it = &p.tracks[0].items[0];
+        let ItemKind::Caption { words, speaker, .. } = &it.kind else {
+            panic!()
+        };
+        assert_eq!(*words, vec![w(0, 300, "hey"), w(400, 1000, "you")]);
+        assert_eq!(*speaker, Some(1));
+        let j = p.to_json().unwrap();
+        assert!(j.contains("\"speaker\": 1") && j.contains("\"words\""));
+        assert_eq!(Project::from_json(&j).unwrap(), p);
+    }
+
+    #[test]
+    fn old_caption_json_without_words_still_loads() {
+        let mut p = Project::new("t", 10, 10, 30);
+        let c = p.add_track(TrackKind::Caption, "C");
+        p.replace_captions(&c, &[(0, 500, "a".into())], &TextStyle::default())
+            .unwrap();
+        let j = p.to_json().unwrap();
+        assert!(!j.contains("words") && !j.contains("speaker") && !j.contains("highlight"));
+        assert_eq!(Project::from_json(&j).unwrap(), p);
     }
 }

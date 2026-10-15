@@ -379,6 +379,8 @@ mod tests {
             ItemKind::Caption {
                 text: "hi".into(),
                 style: TextStyle::default(),
+                words: vec![],
+                speaker: None,
             },
         )
         .unwrap();
@@ -622,6 +624,8 @@ mod tests {
             ItemKind::Caption {
                 text: "Hello {world}".into(),
                 style: ms_project::TextStyle::default(),
+                words: vec![],
+                speaker: None,
             },
         )
         .unwrap();

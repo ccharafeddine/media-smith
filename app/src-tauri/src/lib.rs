@@ -287,6 +287,49 @@ fn delete_caption_model(app: tauri::AppHandle, file: String) -> Result<(), Strin
     ms_captions::models::delete(&models_dir(&app)?, &file).map_err(|e| e.to_string())
 }
 
+fn diarization_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    Ok(models_dir(app)?.join("diarization"))
+}
+
+#[derive(Clone, serde::Serialize)]
+struct DiarizeProgress {
+    step: u32,
+    label: String,
+    received: u64,
+    total: Option<u64>,
+}
+
+/// Are the speaker-detection models and sidecar present?
+#[tauri::command]
+fn diarization_status(app: tauri::AppHandle) -> Result<(bool, bool), String> {
+    let models = ms_captions::diarize::resolve_models(&diarization_dir(&app)?).is_ok();
+    Ok((models, tool(ms_captions::diarize::SIDECAR).is_file()))
+}
+
+/// Download the two speaker-detection models (~46 MB, SHA-256 verified),
+/// emitting `diarize-download-progress`. Cancelled by `cancel_caption_model`.
+#[tauri::command]
+async fn download_diarization_models(app: tauri::AppHandle) -> Result<(), String> {
+    let cancel = app.state::<CaptionState>().model_cancel.clone();
+    cancel.store(false, Ordering::Relaxed);
+    tauri::async_runtime::spawn_blocking(move || {
+        let dir = diarization_dir(&app)?;
+        ms_captions::diarize::download_models(&dir, &cancel, |step, label, received, total| {
+            let _ = app.emit(
+                "diarize-download-progress",
+                DiarizeProgress {
+                    step,
+                    label: label.into(),
+                    received,
+                    total,
+                },
+            );
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 fn cancel_auto_caption(state: tauri::State<'_, CaptionState>) {
     state.transcribe_cancel.store(true, Ordering::Relaxed);
@@ -301,8 +344,10 @@ async fn auto_caption(
     json: String,
     model: Option<String>,
     language: Option<String>,
+    speakers: Option<bool>,
 ) -> Result<String, String> {
     let cancel = app.state::<CaptionState>().transcribe_cancel.clone();
+    let speakers = speakers.unwrap_or(false);
     cancel.store(false, Ordering::Relaxed);
     tauri::async_runtime::spawn_blocking(move || {
         use ms_captions::{models, place, whisper};
@@ -325,6 +370,21 @@ async fn auto_caption(
         if clips.is_empty() {
             return Err("Add a clip to the main video track first.".into());
         }
+        // Speaker detection needs its sidecar and models up front, so a
+        // missing piece fails before minutes of transcription.
+        let diar = if speakers {
+            let (seg, emb) = ms_captions::diarize::resolve_models(&diarization_dir(&app)?)?;
+            let bin = tool(ms_captions::diarize::SIDECAR);
+            if !bin.is_file() {
+                return Err(
+                    "The speaker-detection engine isn't installed in this build (sherpa-onnx sidecar missing)."
+                        .into(),
+                );
+            }
+            Some((bin, seg, emb))
+        } else {
+            None
+        };
         let tmp = std::env::temp_dir().join(format!("mediasmith-captions-{}", std::process::id()));
         std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
         let opts = whisper::Options {
@@ -347,7 +407,7 @@ async fn auto_caption(
                     &whisper::extract_wav_args(source, *src_in, *dur, &wav),
                 )
                 .map_err(|e| e.to_string())?;
-                let segs = whisper::transcribe(
+                let mut segs = whisper::transcribe(
                     &tool("whisper-cli"),
                     &model_path,
                     &wav,
@@ -363,6 +423,11 @@ async fn auto_caption(
                     },
                 )
                 .map_err(|e| e.to_string())?;
+                if let Some((bin, seg, emb)) = &diar {
+                    let turns = ms_captions::diarize::run(bin, seg, emb, &wav, &cancel)?;
+                    ms_captions::diarize::assign_speakers(&mut segs, &turns);
+                    ms_captions::diarize::renumber_by_first_appearance(&mut segs);
+                }
                 cues.extend(place::place_segments(*start, *dur, &segs, 6));
             }
             Ok::<(), String>(())
@@ -373,12 +438,26 @@ async fn auto_caption(
             Some(t) => t.id.clone(),
             None => project.add_track(TrackKind::Caption, "Captions"),
         };
-        let items: Vec<(u64, u64, String)> = cues
+        let items: Vec<ms_project::CaptionCue> = cues
             .into_iter()
-            .map(|c| (c.start_ms, c.duration_ms, c.text))
+            .map(|c| ms_project::CaptionCue {
+                start_ms: c.start_ms,
+                duration_ms: c.duration_ms,
+                text: c.text,
+                words: c
+                    .words
+                    .into_iter()
+                    .map(|w| ms_project::CaptionWord {
+                        start_ms: w.start_ms,
+                        end_ms: w.end_ms,
+                        text: w.text,
+                    })
+                    .collect(),
+                speaker: c.speaker,
+            })
             .collect();
         project
-            .replace_captions(&track, &items, &ms_project::TextStyle::default())
+            .replace_caption_cues(&track, &items, &ms_project::TextStyle::default())
             .map_err(|e| e.to_string())?;
         project.to_json().map_err(|e| e.to_string())
     })
@@ -549,7 +628,9 @@ pub fn run() {
             cancel_caption_model,
             delete_caption_model,
             auto_caption,
-            cancel_auto_caption
+            cancel_auto_caption,
+            diarization_status,
+            download_diarization_models
         ])
         .run(tauri::generate_context!())
         .expect("error while running MediaSmith");
