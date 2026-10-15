@@ -5,7 +5,21 @@
   "type": "module",
   "license": "GPL-3.0-or-later",
   "main": "src/index.ts",
-  "exports": { ".": "./src/index.ts", "./tokens.css": "./src/tokens.css", "./fonts.css": "./src/fonts.css" },
-  "scripts": { "typecheck": "tsc -p tsconfig.json", "test": "vitest run" },
-  "peerDependencies": { "solid-js": "^1.9.3" }
+  "exports": {
+    ".": "./src/index.ts",
+    "./tokens.css": "./src/tokens.css",
+    "./fonts.css": "./src/fonts.css",
+    "./components.css": "./src/components.css",
+    "./brand/*": "./src/brand/*"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "peerDependencies": {
+    "solid-js": "^1.9.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5"
+  }
 }
