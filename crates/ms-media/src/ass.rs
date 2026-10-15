@@ -3,7 +3,7 @@
 //! Every item becomes one Dialogue event with inline overrides for position,
 //! font, size, colour and stroke; times are timeline times.
 
-use ms_project::{CaptionWord, ItemKind, Project, TextStyle, TrackKind};
+use ms_project::{CaptionWord, ItemKind, Project, TextAnim, TextStyle, TrackKind};
 
 /// `#rrggbb` → ASS `&H00BBGGRR` (alpha 00 = opaque). Bad input → white.
 pub fn ass_color(hex: &str) -> String {
@@ -62,8 +62,32 @@ fn overrides(style: &TextStyle, scale: f64, (w, h): (u32, u32), karaoke: bool) -
         )),
         None => o.push_str("\\bord0"),
     }
-    o.push_str("\\shad0}");
+    o.push_str("\\shad0");
+    match style.anim {
+        TextAnim::None => {}
+        TextAnim::Fade => o.push_str("\\fad(250,250)"),
+        TextAnim::Pop => o.push_str("\\fscx70\\fscy70\\t(0,180,\\fscx100\\fscy100)"),
+        TextAnim::SlideUp => {
+            let dy = (h as f64 * 0.04).round();
+            o = o.replacen(
+                &format!("\\pos({x},{y})"),
+                &format!("\\move({x},{},{x},{y},0,250)", y + dy),
+                1,
+            );
+            o.push_str("\\fad(200,0)");
+        }
+    }
+    o.push('}');
     o
+}
+
+/// `\\fad` for an item's edge fades (empty when it has none).
+fn item_fade(fin: u64, fout: u64) -> String {
+    if fin == 0 && fout == 0 {
+        String::new()
+    } else {
+        format!("{{\\fad({fin},{fout})}}")
+    }
 }
 
 /// Karaoke body: `{\\kN}` per word in centiseconds. Each word's duration
@@ -121,11 +145,13 @@ Style: Default,Arial,48,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,-1,0,0,0,100
                 } else {
                     ass_escape(text)
                 };
+                let (fin, fout) = it.fades();
                 out.push_str(&format!(
-                    "Dialogue: {layer},{},{},Default,,0,0,0,,{}{}\n",
+                    "Dialogue: {layer},{},{},Default,,0,0,0,,{}{}{}\n",
                     ass_time(it.start_ms),
                     ass_time(it.end_ms()),
                     overrides(style, scale, size, karaoke),
+                    item_fade(fin, fout),
                     body
                 ));
             }
@@ -238,5 +264,47 @@ mod tests {
         }
         let s = build_ass(&p, (100, 100));
         assert!(!s.contains("\\k") && !s.contains("\\2c") && s.ends_with("Hi you\n"));
+    }
+
+    #[test]
+    fn text_animations_and_item_fades() {
+        let mut p = Project::new("t", 100, 100, 30);
+        let x = p.add_track(TrackKind::Text, "T");
+        let add = |p: &mut Project, at: u64, anim: TextAnim| {
+            p.add_item(
+                &x,
+                at,
+                1000,
+                ItemKind::Text {
+                    text: "T".into(),
+                    style: TextStyle {
+                        anim,
+                        ..Default::default()
+                    },
+                },
+            )
+            .unwrap()
+        };
+        add(&mut p, 0, TextAnim::Fade);
+        add(&mut p, 1000, TextAnim::Pop);
+        let id = add(&mut p, 2000, TextAnim::SlideUp);
+        p.set_fade(
+            &id,
+            Some(ms_project::Fade {
+                in_ms: 100,
+                out_ms: 300,
+            }),
+        )
+        .unwrap();
+        let s = build_ass(&p, (100, 100));
+        let lines: Vec<&str> = s.lines().filter(|l| l.starts_with("Dialogue")).collect();
+        assert!(lines[0].contains("\\fad(250,250)}T"), "{s}");
+        assert!(lines[1].contains("\\fscx70\\fscy70\\t(0,180,\\fscx100\\fscy100)}T"));
+        assert!(
+            lines[2].contains("\\move(50,86,50,82,0,250)") && !lines[2].contains("\\pos("),
+            "{}",
+            lines[2]
+        );
+        assert!(lines[2].ends_with("{\\fad(100,300)}T"), "{}", lines[2]);
     }
 }

@@ -1,7 +1,7 @@
 import { For, Show } from "solid-js";
 import type { Editor } from "../store/store";
 import {
-  DEFAULT_TRANSFORM, PIP_PRESETS, POSITION_PRESETS, STYLE_PRESETS, findItem, isOverlayItem, type Item, type TextStyle, type Transform,
+  ANIMATIONS, DEFAULT_TRANSFORM, PIP_PRESETS, POSITION_PRESETS, STYLE_PRESETS, findItem, isOverlayItem, type Item, type TextStyle, type Transform,
 } from "../store/model";
 
 type TextItem = Item & { type: "text" | "caption" };
@@ -50,6 +50,27 @@ export function Inspector(props: { editor: Editor }) {
           </div>
           <label class="field">X<input type="range" min="0" max="1" step="0.01" value={t().style.x} onChange={(ev) => style({ x: Number(ev.currentTarget.value) })} /></label>
           <label class="field">Y<input type="range" min="0" max="1" step="0.01" value={t().style.y} onChange={(ev) => style({ y: Number(ev.currentTarget.value) })} /></label>
+          <div class="sec">Animation</div>
+          <div class="chips">
+            <For each={ANIMATIONS}>{(a) => (
+              <button class={`chip ${(t().style.anim ?? "none") === a.id ? "on" : ""}`} onClick={() => style({ anim: a.id })}>{a.label}</button>
+            )}</For>
+          </div>
+        </div>
+      )}</Show>
+      <Show when={item()}>{(it) => (
+        <div class="inspector" data-testid="fade-inspector">
+          <div class="sec">Fade (transition)</div>
+          <div class="row">
+            <label class="field">In (s)<input type="number" step="0.1" min="0" value={secs(it().fade?.in_ms ?? 0)}
+              onChange={(ev) => e.setFade(it().id, { in_ms: toMs(ev.currentTarget.value), out_ms: it().fade?.out_ms ?? 0 })} /></label>
+            <label class="field">Out (s)<input type="number" step="0.1" min="0" value={secs(it().fade?.out_ms ?? 0)}
+              onChange={(ev) => e.setFade(it().id, { in_ms: it().fade?.in_ms ?? 0, out_ms: toMs(ev.currentTarget.value) })} /></label>
+          </div>
+          <div class="chips">
+            <button class="chip" onClick={() => e.setFade(it().id, { in_ms: 500, out_ms: 500 })}>Fade in + out</button>
+            <button class="chip" onClick={() => e.setFade(it().id, null)}>No fade</button>
+          </div>
         </div>
       )}</Show>
       <Show when={overlay()}>{(o) => {

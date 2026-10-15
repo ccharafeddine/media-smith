@@ -1,8 +1,10 @@
-import { createSignal, For, onCleanup, onMount, Show } from "solid-js";
+import { createEffect, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import { getPlatform, type ExportPreset } from "@mediasmith/platform";
 import { PRESETS, TOOLS, type Tool } from "./mock";
 import { createEditor } from "./store/store";
-import { findItem, fromJson, toJson } from "./store/model";
+import { findItem, fromJson, TEMPLATES, textsAt, toJson } from "./store/model";
+import { actionFor, isTypingTarget, SHORTCUTS } from "./lib/shortcuts";
+import { clearSnapshot, debounce, readSnapshot, writeSnapshot, type Snapshot } from "./lib/autosave";
 import { Timeline } from "./components/Timeline";
 import { Player } from "./components/Player";
 import { Settings } from "./components/Settings";
@@ -46,9 +48,22 @@ export default function App() {
   });
   const save = () => run("Saved", async () => {
     const where = await platform.saveProject(toJson(editor.project()), editor.project().name);
-    if (where) editor.markSaved();
+    if (where) { editor.markSaved(); clearSnapshot(localStorage); }
     return where;
   });
+
+  // Autosave / crash recovery: snapshot 1.5 s after the last edit while
+  // unsaved; offer a pending snapshot back on launch.
+  const [recover, setRecover] = createSignal<Snapshot | null>(readSnapshot(localStorage));
+  const snap = debounce((json: string, name: string) => writeSnapshot(localStorage, name, json), 1500);
+  createEffect(() => {
+    const p = editor.project();
+    if (editor.dirty() && !recover()) snap(toJson(p), p.name);
+  });
+  const flush = () => snap.flush();
+  window.addEventListener("beforeunload", flush);
+  onCleanup(() => window.removeEventListener("beforeunload", flush));
+  const [help, setHelp] = createSignal(false);
   const open = () => run("Opened", async () => {
     const json = await platform.openProject();
     if (!json) return null;
@@ -65,13 +80,36 @@ export default function App() {
     }
   });
 
+  const frameMs = () => 1000 / Math.max(1, editor.project().canvas.fps);
   function onKey(ev: KeyboardEvent) {
-    if ((ev.target as HTMLElement).tagName === "INPUT") return;
-    if (ev.key === "s" && !ev.ctrlKey) editor.splitAtPlayhead();
-    else if (ev.key === "Delete" || ev.key === "Backspace") editor.deleteSelected();
-    else if (ev.key === "z" && ev.ctrlKey) editor.undo();
-    else if (ev.key === "s" && ev.ctrlKey) { ev.preventDefault(); void save(); }
-    else if (ev.key === "o" && ev.ctrlKey) { ev.preventDefault(); void open(); }
+    if (ev.defaultPrevented || isTypingTarget(ev.target)) return;
+    const a = actionFor(ev);
+    if (!a) return;
+    // Arrow keys nudge a selected on-screen text layer (handled in Player).
+    const textSel = textsAt(editor.project(), editor.playhead()).some((t) => t.id === editor.selected());
+    if (textSel && (a === "frameBack" || a === "frameFwd" || a === "secBack" || a === "secFwd")) return;
+    ev.preventDefault();
+    const ph = editor.playhead();
+    switch (a) {
+      case "play": window.dispatchEvent(new Event("ms:toggle-play")); break;
+      case "split": editor.splitAtPlayhead(); break;
+      case "delete": editor.deleteSelected(); break;
+      case "duplicate": editor.duplicateSelected(); break;
+      case "undo": editor.undo(); break;
+      case "redo": editor.redo(); break;
+      case "save": void save(); break;
+      case "open": void open(); break;
+      case "export": if (editor.duration() > 0 && !busy()) void exportNow(); break;
+      case "frameBack": editor.seek(ph - frameMs()); break;
+      case "frameFwd": editor.seek(ph + frameMs()); break;
+      case "secBack": editor.seek(ph - 1000); break;
+      case "secFwd": editor.seek(ph + 1000); break;
+      case "home": editor.seek(0); break;
+      case "end": editor.seek(editor.duration()); break;
+      case "zoomIn": setZoom((z) => Math.min(400, Math.round(z * 1.25))); break;
+      case "zoomOut": setZoom((z) => Math.max(5, Math.round(z / 1.25))); break;
+      case "help": setHelp((h) => !h); break;
+    }
   }
   onMount(() => window.addEventListener("keydown", onKey));
   onCleanup(() => window.removeEventListener("keydown", onKey));
@@ -92,6 +130,14 @@ export default function App() {
               title={p.label} onClick={() => setPreset(p.id)}>{p.label.split(" · ")[0]}</button>
           )}</For>
         </div>
+        <Show when={recover()}>{(r) => (
+          <div class="recover">
+            <span>Unsaved work from {new Date(r().at).toLocaleString()}</span>
+            <button class="chip" onClick={() => { try { editor.load(fromJson(r().json)); editor.setMessage(`Recovered “${r().name}”`); } catch { editor.setMessage("That autosave couldn't be read"); } setRecover(null); }}>Restore</button>
+            <button class="chip" onClick={() => { clearSnapshot(localStorage); setRecover(null); }}>Discard</button>
+          </div>
+        )}</Show>
+        <button class="chip" title="Keyboard shortcuts (?)" onClick={() => setHelp(true)}>⌨</button>
         <span class={`badge ${platform.kind}`}>{platform.kind}</span>
         <Show when={progress() !== null} fallback={
           <button class="export" disabled={!!busy() || editor.duration() === 0} onClick={exportNow}>Export</button>
@@ -119,7 +165,22 @@ export default function App() {
         <Show when={editor.message()}><p class="note">{editor.message()}</p></Show>
         <Show when={tool() === "Captions"}><CaptionsPanel editor={editor} platform={platform} /></Show>
         <Show when={tool() !== "Captions" && tool() === "Settings"}><Settings platform={platform} /></Show>
-        <Show when={tool() !== "Captions" && tool() !== "Settings"}>
+        <Show when={tool() === "Design"}>
+          <div class="sec">Templates</div>
+          <div class="templates">
+            <For each={TEMPLATES}>{(t) => (
+              <button class="btn2" onClick={() => {
+                if (editor.applyTemplate(t.id)) {
+                  const p = PRESETS.find((x) => x.w === t.w && x.h === t.h);
+                  if (p && platform.caps.exportPresets.includes(p.id)) setPreset(p.id);
+                  editor.setMessage(`Template: ${t.label}`);
+                }
+              }}>{t.label} <span class="dim">{t.w}×{t.h}</span></button>
+            )}</For>
+          </div>
+          <p class="dim">Restyles captions, sets the canvas, and adds the title at the playhead. Undo with Ctrl+Z.</p>
+        </Show>
+        <Show when={tool() !== "Captions" && tool() !== "Settings" && tool() !== "Design"}>
             <button class="btn2" onClick={importMedia}>⇣ Import video</button>
             <div class="row">
               <button class="btn2" onClick={() => editor.addText("Your title", editor.playhead())}>+ Text</button>
@@ -141,13 +202,25 @@ export default function App() {
               <button class="btn2" onClick={() => editor.splitAtPlayhead()} title="S">Split</button>
               <button class="btn2" onClick={() => editor.deleteSelected()} title="Delete">Delete</button>
               <button class="btn2" onClick={() => editor.undo()} title="Ctrl+Z">Undo</button>
+              <button class="btn2" onClick={() => editor.redo()} title="Ctrl+Shift+Z">Redo</button>
+              <button class="btn2" onClick={() => editor.duplicateSelected()} title="Ctrl+D">Duplicate</button>
             </div>
-            <label>Zoom<input type="range" min="20" max="200" value={zoom()} onInput={(ev) => setZoom(Number(ev.currentTarget.value))} /></label>
+            <label>Zoom<input type="range" min="5" max="400" value={zoom()} onInput={(ev) => setZoom(Number(ev.currentTarget.value))} /></label>
             <Show when={!platform.caps.urlImport}><p class="dim">Link import and MP4 export need the desktop app.</p></Show>
         </Show>
       </aside>
 
       <Timeline editor={editor} pxPerSec={zoom()} platform={platform} />
+      <Show when={help()}>
+        <div class="help-overlay" onClick={() => setHelp(false)}>
+          <div class="card" onClick={(ev) => ev.stopPropagation()}>
+            <h3>Keyboard shortcuts</h3>
+            <table><tbody>
+              <For each={SHORTCUTS}>{(k) => <tr><td><kbd>{k.keys}</kbd></td><td>{k.label}</td></tr>}</For>
+            </tbody></table>
+          </div>
+        </div>
+      </Show>
     </div>
   );
 }

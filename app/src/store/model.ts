@@ -4,7 +4,11 @@
 
 export type TrackKind = "video" | "audio" | "text" | "caption";
 
-export interface TextStyle { font: string; size_px: number; color: string; stroke: string | null; x: number; y: number; highlight?: string | null }
+export type TextAnim = "none" | "fade" | "pop" | "slide-up";
+export interface TextStyle { font: string; size_px: number; color: string; stroke: string | null; x: number; y: number; highlight?: string | null; anim?: TextAnim }
+
+/** Edge fades (mirrors ms-project Fade). */
+export interface Fade { in_ms: number; out_ms: number }
 
 /** A spoken word, relative to its caption item's start (mirrors ms-project CaptionWord). */
 export interface CaptionWord { start_ms: number; end_ms: number; text: string }
@@ -17,7 +21,7 @@ export type ItemKind =
 /** Placement of a clip on an overlay video track (mirrors ms-project Transform). */
 export interface Transform { x: number; y: number; scale: number; opacity: number }
 
-export type Item = { id: string; start_ms: number; duration_ms: number; transform?: Transform } & ItemKind;
+export type Item = { id: string; start_ms: number; duration_ms: number; transform?: Transform; fade?: Fade } & ItemKind;
 
 export interface Track { id: string; kind: TrackKind; name: string; muted: boolean; items: Item[] }
 
@@ -142,6 +146,19 @@ export function splitItem(p: Project, id: string, at_ms: number): { project: Pro
     newId = freshId(q, "i");
     const right = { ...structuredClone(it), id: newId, start_ms: it.start_ms + left, duration_ms: it.duration_ms - left } as Item;
     if (right.type === "clip") right.source_in_ms += left;
+    // Karaoke words go with the half they're spoken in (same rule as Rust).
+    if (right.type === "caption" && right.words) {
+      right.words = right.words.filter((w) => w.end_ms > left).map((w) => ({ ...w, start_ms: Math.max(0, w.start_ms - left), end_ms: w.end_ms - left }));
+    }
+    if (it.type === "caption" && it.words) {
+      it.words = it.words.filter((w) => w.start_ms < left).map((w) => ({ ...w, end_ms: Math.min(w.end_ms, left) }));
+    }
+    // A cut is a hard edit: the fade-in stays left, the fade-out goes right.
+    if (it.fade) {
+      const f = it.fade;
+      if (f.in_ms > 0) it.fade = { in_ms: f.in_ms, out_ms: 0 }; else delete it.fade;
+      if (f.out_ms > 0) right.fade = { in_ms: 0, out_ms: f.out_ms }; else delete right.fade;
+    }
     it.duration_ms = left;
     q.tracks[ti].items.splice(ii + 1, 0, right);
   });
@@ -370,4 +387,74 @@ export function setSpeaker(p: Project, id: string, speaker: number | null): Proj
     const it = q.tracks[ti].items[ii] as Item & { type: "caption" };
     if (speaker == null) delete it.speaker; else it.speaker = Math.max(0, Math.round(speaker));
   });
+}
+
+// ---- Phase 6: fades, animation, templates, duplicate ----
+
+export const ANIMATIONS: { id: TextAnim; label: string }[] = [
+  { id: "none", label: "None" }, { id: "fade", label: "Fade" }, { id: "pop", label: "Pop" }, { id: "slide-up", label: "Slide up" },
+];
+
+/** Set (or clear) an item's edge fades, clamped to its length. */
+export function setFade(p: Project, id: string, f: Fade | null): Project {
+  const { ti, ii } = locate(p, id);
+  return transact(p, (q) => {
+    const it = q.tracks[ti].items[ii];
+    const fin = Math.round(clamp(f?.in_ms ?? 0, 0, it.duration_ms));
+    const fout = Math.round(clamp(f?.out_ms ?? 0, 0, it.duration_ms - fin));
+    if (fin || fout) it.fade = { in_ms: fin, out_ms: fout }; else delete it.fade;
+  });
+}
+
+/** Opacity (0..1) of an item at timeline time `t` from its fades. */
+export function fadeOpacity(it: Item, t: number): number {
+  const f = it.fade;
+  if (!f) return 1;
+  const rel = t - it.start_ms, left = endMs(it) - t;
+  let o = 1;
+  if (f.in_ms > 0 && rel < f.in_ms) o = Math.min(o, Math.max(0, rel / f.in_ms));
+  if (f.out_ms > 0 && left < f.out_ms) o = Math.min(o, Math.max(0, left / f.out_ms));
+  return o;
+}
+
+/** Copy an item to right after itself on the same track (or the next free
+ *  spot after it). Returns the new id. */
+export function duplicateItem(p: Project, id: string): { project: Project; id: string } {
+  const { ti, ii } = locate(p, id);
+  const src = p.tracks[ti].items[ii];
+  const track = p.tracks[ti];
+  let start = endMs(src);
+  for (const o of [...track.items].sort((a, b) => a.start_ms - b.start_ms)) {
+    if (o.start_ms < start + src.duration_ms && endMs(o) > start) start = Math.max(start, endMs(o));
+  }
+  let newId = "";
+  const project = transact(p, (q) => {
+    newId = freshId(q, "i");
+    q.tracks[ti].items.push({ ...structuredClone(src), id: newId, start_ms: start } as Item);
+  });
+  return { project, id: newId };
+}
+
+/** One-click starting points: canvas size + a styled title and caption look. */
+export interface Template { id: string; label: string; w: number; h: number; title?: { text: string; style: Partial<TextStyle> }; caption: Partial<TextStyle> }
+export const TEMPLATES: Template[] = [
+  { id: "tiktok", label: "TikTok / Reels captions", w: 1080, h: 1920, caption: { size_px: 84, color: "#ffffff", stroke: "#000000", highlight: "#ffd400", y: 0.7, anim: "pop" } },
+  { id: "shorts-hook", label: "Shorts hook title", w: 1080, h: 1920, title: { text: "WAIT FOR IT…", style: { size_px: 120, color: "#ffd400", stroke: "#000000", y: 0.15, anim: "slide-up" } }, caption: { size_px: 72, y: 0.75 } },
+  { id: "youtube", label: "YouTube lower third", w: 1920, h: 1080, title: { text: "Your Name · Title", style: { size_px: 56, color: "#ffffff", stroke: "#1a1a1a", x: 0.3, y: 0.85, anim: "fade" } }, caption: { size_px: 48, y: 0.9 } },
+  { id: "insta", label: "Instagram feed 4:5", w: 1080, h: 1350, caption: { size_px: 64, color: "#ffffff", stroke: "#000000", y: 0.82, anim: "fade" } },
+  { id: "square-quote", label: "Square quote card", w: 1080, h: 1080, title: { text: "“Make it simple.”", style: { size_px: 96, color: "#ffffff", stroke: null, y: 0.5, anim: "fade" } }, caption: { size_px: 56, y: 0.85 } },
+];
+
+/** Apply a template: resize the canvas, restyle every caption, and add its
+ *  title (if any) at `at_ms` on a text track. One undoable step. */
+export function applyTemplate(p: Project, id: string, at_ms = 0): Project {
+  const t = TEMPLATES.find((x) => x.id === id);
+  if (!t) throw new EditError(`Unknown template ${id}`);
+  let q: Project = { ...clone(p), canvas: { ...p.canvas, width: t.w, height: t.h } };
+  for (const tr of q.tracks) for (const i of tr.items) if (i.type === "caption") i.style = { ...i.style, ...t.caption };
+  if (t.title) {
+    const tt = ensureTrack(q, "text", "Text");
+    q = addItem(tt.project, tt.id, Math.max(0, Math.round(at_ms)), 3000, { type: "text", text: t.title.text, style: { ...defaultStyle(), ...t.title.style } }).project;
+  }
+  return q;
 }

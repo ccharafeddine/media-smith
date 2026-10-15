@@ -11,12 +11,13 @@ export interface Capabilities {
   exportPresets: ExportPreset[];
 }
 
-export type ExportPreset = "vertical" | "landscape" | "square" | "gif";
+export type ExportPreset = "vertical" | "landscape" | "square" | "portrait" | "gif";
 
 export const PRESET_SIZES: Record<ExportPreset, [number, number]> = {
   vertical: [1080, 1920],
   landscape: [1920, 1080],
   square: [1080, 1080],
+  portrait: [1080, 1350],
   gif: [480, 480],
 };
 

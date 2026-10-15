@@ -16,6 +16,17 @@ pub struct Client {
     label: String,
 }
 
+/// Debug never prints the key.
+impl std::fmt::Debug for Client {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Client")
+            .field("base", &self.base)
+            .field("label", &self.label)
+            .field("has_key", &self.key.is_some())
+            .finish()
+    }
+}
+
 impl Client {
     pub fn new(cfg: &ProviderConfig, key: Option<String>) -> Result<Self, AiError> {
         cfg.validate()?;

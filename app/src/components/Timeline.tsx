@@ -1,4 +1,5 @@
-import { createResource, For, Show } from "solid-js";
+import { createResource, createSignal, For, onCleanup, onMount, Show } from "solid-js";
+import { rulerTicks, visibleItems } from "../lib/view";
 import type { Platform } from "@mediasmith/platform";
 import { snap, snapMove, snapTargets, snapThresholdMs } from "../store/snap";
 import { formatTime, timeToX } from "@mediasmith/ui";
@@ -36,6 +37,15 @@ export function Timeline(props: { editor: Editor; pxPerSec: number; platform: Pl
   const e = props.editor;
   const xToMs = (x: number) => Math.max(0, (x / props.pxPerSec) * 1000);
   const seconds = () => Math.max(10, Math.ceil(e.duration() / 1000) + 5);
+  // Viewport: only items and ruler labels near the visible window render.
+  let root!: HTMLElement;
+  const [scroll, setScroll] = createSignal(0);
+  const [width, setWidth] = createSignal(1600);
+  onMount(() => {
+    const ro = new ResizeObserver(() => setWidth(root.clientWidth));
+    ro.observe(root);
+    onCleanup(() => ro.disconnect());
+  });
 
   function onLanePointer(ev: PointerEvent) {
     const lane = ev.currentTarget as HTMLElement;
@@ -80,9 +90,9 @@ export function Timeline(props: { editor: Editor; pxPerSec: number; platform: Pl
   }
 
   return (
-    <section class="ms-timeline">
+    <section class="ms-timeline" ref={root} onScroll={() => setScroll(root.scrollLeft)}>
       <div class="ruler" onPointerDown={onLanePointer} style={{ width: `${seconds() * props.pxPerSec}px` }}>
-        <For each={Array.from({ length: seconds() + 1 }, (_, i) => i)}>{(s) => (
+        <For each={rulerTicks(scroll(), width(), props.pxPerSec, seconds())}>{(s) => (
           <span style={{ left: `${timeToX(s * 1000, props.pxPerSec)}px` }}>{formatTime(s * 1000).replace(/\.\d$/, "")}</span>
         )}</For>
       </div>
@@ -90,12 +100,14 @@ export function Timeline(props: { editor: Editor; pxPerSec: number; platform: Pl
         <div class={`track ${t.kind}`}>
           <div class="head">{t.name}</div>
           <div class="lane" onPointerDown={onLanePointer} style={{ width: `${seconds() * props.pxPerSec}px` }}>
-            <For each={t.items}>{(it) => (
+            <For each={visibleItems(t.items, scroll(), width(), props.pxPerSec, e.selected())}>{(it) => (
               <div class={`item ${e.selected() === it.id ? "sel" : ""}`} data-id={it.id}
                 style={{ left: `${timeToX(it.start_ms, props.pxPerSec)}px`, width: `${timeToX(it.duration_ms, props.pxPerSec)}px` }}
                 onPointerDown={(ev) => drag(ev, it, "move")}>
                 <Show when={t.kind === "video"}><Filmstrip platform={props.platform} item={it} pxPerSec={props.pxPerSec} /></Show>
                 <i class="grip l" onPointerDown={(ev) => drag(ev, it, "left")} />
+                <Show when={it.fade?.in_ms}><i class="fade-in" style={{ width: `${timeToX(it.fade!.in_ms, props.pxPerSec)}px` }} /></Show>
+                <Show when={it.fade?.out_ms}><i class="fade-out" style={{ width: `${timeToX(it.fade!.out_ms, props.pxPerSec)}px` }} /></Show>
                 <span>{label(it)}</span>
                 <i class="grip r" onPointerDown={(ev) => drag(ev, it, "right")} />
               </div>

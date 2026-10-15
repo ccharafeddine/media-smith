@@ -50,6 +50,26 @@ pub struct TextStyle {
     /// word switches from `color` to this as it is spoken.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub highlight: Option<String>,
+    /// Entrance animation.
+    #[serde(default, skip_serializing_if = "TextAnim::is_none")]
+    pub anim: TextAnim,
+}
+
+/// How a text layer enters the frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TextAnim {
+    #[default]
+    None,
+    Fade,
+    Pop,
+    SlideUp,
+}
+
+impl TextAnim {
+    pub fn is_none(&self) -> bool {
+        *self == Self::None
+    }
 }
 
 /// One spoken word of a caption, relative to the item's start so the timing
@@ -82,6 +102,7 @@ impl Default for TextStyle {
             x: 0.5,
             y: 0.82,
             highlight: None,
+            anim: TextAnim::None,
         }
     }
 }
@@ -157,11 +178,31 @@ pub struct Item {
     /// track, [`Transform::default`] on overlay tracks).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transform: Option<Transform>,
+    /// Fade from/to black (video) and silence (audio) at the item's edges;
+    /// on text and captions it fades the layer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fade: Option<Fade>,
+}
+
+/// Edge fades in milliseconds. Together they never exceed the item length.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct Fade {
+    #[serde(default)]
+    pub in_ms: u64,
+    #[serde(default)]
+    pub out_ms: u64,
 }
 
 impl Item {
     pub fn end_ms(&self) -> u64 {
         self.start_ms + self.duration_ms
+    }
+
+    /// Fades clamped to the item length (in first, then out), or (0, 0).
+    pub fn fades(&self) -> (u64, u64) {
+        let f = self.fade.unwrap_or_default();
+        let i = f.in_ms.min(self.duration_ms);
+        (i, f.out_ms.min(self.duration_ms - i))
     }
 }
 
@@ -243,6 +284,7 @@ impl Project {
             duration_ms,
             kind,
             transform: None,
+            fade: None,
         };
         let t = self.track_mut(track)?;
         t.items.push(item);
@@ -270,6 +312,35 @@ impl Project {
                 right.duration_ms = it.duration_ms - left;
                 if let ItemKind::Clip { source_in_ms, .. } = &mut right.kind {
                     *source_in_ms += left;
+                }
+                // Karaoke words go with the half they're spoken in.
+                if let ItemKind::Caption { words, .. } = &mut right.kind {
+                    *words = words
+                        .iter()
+                        .filter(|w| w.end_ms > left)
+                        .map(|w| CaptionWord {
+                            start_ms: w.start_ms.saturating_sub(left),
+                            end_ms: w.end_ms - left,
+                            text: w.text.clone(),
+                        })
+                        .collect();
+                }
+                if let ItemKind::Caption { words, .. } = &mut it.kind {
+                    words.retain(|w| w.start_ms < left);
+                    for w in words.iter_mut() {
+                        w.end_ms = w.end_ms.min(left);
+                    }
+                }
+                // The cut is a hard edit: fade-in stays left, fade-out right.
+                if let Some(f) = it.fade {
+                    it.fade = (f.in_ms > 0).then_some(Fade {
+                        in_ms: f.in_ms,
+                        out_ms: 0,
+                    });
+                    right.fade = (f.out_ms > 0).then_some(Fade {
+                        in_ms: 0,
+                        out_ms: f.out_ms,
+                    });
                 }
                 it.duration_ms = left;
                 t.items.insert(pos + 1, right);
@@ -452,12 +523,20 @@ impl Project {
                     speaker: c.speaker,
                 },
                 transform: None,
+                fade: None,
             });
             cursor = end;
         }
         let n = placed.len();
         self.track_mut(track)?.items = placed;
         Ok(n)
+    }
+
+    /// Set (or clear with `None`) an item's edge fades.
+    pub fn set_fade(&mut self, item_id: &str, fade: Option<Fade>) -> Result<(), ProjectError> {
+        let (ti, ii) = self.locate(item_id)?;
+        self.tracks[ti].items[ii].fade = fade.filter(|f| f.in_ms > 0 || f.out_ms > 0);
+        Ok(())
     }
 
     /// Clips of the first video track, in timeline order: what a simple
@@ -855,6 +934,82 @@ mod tests {
             .unwrap();
         let j = p.to_json().unwrap();
         assert!(!j.contains("words") && !j.contains("speaker") && !j.contains("highlight"));
+        assert_eq!(Project::from_json(&j).unwrap(), p);
+    }
+
+    #[test]
+    fn split_divides_words_and_fades() {
+        let mut p = Project::new("t", 10, 10, 30);
+        let c = p.add_track(TrackKind::Caption, "C");
+        let w = |s, e, t: &str| CaptionWord {
+            start_ms: s,
+            end_ms: e,
+            text: t.into(),
+        };
+        let id = p
+            .add_item(
+                &c,
+                1000,
+                2000,
+                ItemKind::Caption {
+                    text: "a b c".into(),
+                    style: TextStyle::default(),
+                    words: vec![w(0, 400, "a"), w(800, 1200, "b"), w(1500, 1900, "c")],
+                    speaker: None,
+                },
+            )
+            .unwrap();
+        p.set_fade(
+            &id,
+            Some(Fade {
+                in_ms: 300,
+                out_ms: 500,
+            }),
+        )
+        .unwrap();
+        let r = p.split(&id, 2000).unwrap();
+        let items = &p.tracks[0].items;
+        let words = |i: usize| match &items[i].kind {
+            ItemKind::Caption { words, .. } => words.clone(),
+            _ => panic!(),
+        };
+        assert_eq!(words(0), vec![w(0, 400, "a"), w(800, 1000, "b")]);
+        assert_eq!(words(1), vec![w(0, 200, "b"), w(500, 900, "c")]);
+        assert_eq!(
+            items[0].fade,
+            Some(Fade {
+                in_ms: 300,
+                out_ms: 0
+            })
+        );
+        assert_eq!(items[1].id, r);
+        assert_eq!(
+            items[1].fade,
+            Some(Fade {
+                in_ms: 0,
+                out_ms: 500
+            })
+        );
+        p.set_fade(&r, Some(Fade::default())).unwrap();
+        assert_eq!(p.tracks[0].items[1].fade, None);
+    }
+
+    #[test]
+    fn fades_clamp_to_length() {
+        let mut p = Project::new("t", 10, 10, 30);
+        let v = p.add_track(TrackKind::Video, "V");
+        let id = p.add_item(&v, 0, 1000, clip("a.mp4")).unwrap();
+        p.set_fade(
+            &id,
+            Some(Fade {
+                in_ms: 800,
+                out_ms: 800,
+            }),
+        )
+        .unwrap();
+        assert_eq!(p.tracks[0].items[0].fades(), (800, 200));
+        let j = p.to_json().unwrap();
+        assert!(j.contains("\"fade\""));
         assert_eq!(Project::from_json(&j).unwrap(), p);
     }
 }

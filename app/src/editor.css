@@ -108,3 +108,23 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 .field { display: flex; flex-direction: column; gap: 2px; font-size: 11px; color: var(--fg-2); flex: 1; }
 .chips { display: flex; flex-wrap: wrap; gap: 4px; }
 .btn2.primary { border-color: var(--track-caption); }
+
+/* Phase 6: text entrance animations (mirrors the ASS export), help, templates */
+.text-layer.anim-fade { animation: ms-fade 250ms ease-out; }
+.text-layer.anim-pop { animation: ms-pop 180ms ease-out; }
+.text-layer.anim-slide-up { animation: ms-slide 250ms ease-out; }
+@keyframes ms-fade { from { opacity: 0; } }
+@keyframes ms-pop { from { transform: translate(-50%, -50%) scale(0.7); } }
+@keyframes ms-slide { from { transform: translate(-50%, calc(-50% + 4cqh)); opacity: 0; } }
+.canvas { container-type: size; }
+.help-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.55); display: grid; place-items: center; z-index: 50; }
+.help-overlay .card { background: var(--surface, #15151c); border: 1px solid var(--border-strong); border-radius: 12px; padding: 18px 22px; min-width: 360px; }
+.help-overlay table { border-collapse: collapse; width: 100%; }
+.help-overlay td { padding: 4px 8px; }
+.help-overlay kbd { font-family: inherit; padding: 1px 6px; border: 1px solid var(--border-strong); border-radius: 4px; }
+.recover { display: flex; gap: 8px; align-items: center; padding: 6px 10px; background: var(--track-caption); color: #000; border-radius: 8px; margin: 0 8px; }
+.templates { display: grid; gap: 6px; }
+.templates button { text-align: left; }
+.item .fade-in, .item .fade-out { position: absolute; top: 0; bottom: 0; pointer-events: none; }
+.item .fade-in { left: 0; background: linear-gradient(to right, rgba(0,0,0,0.55), transparent); }
+.item .fade-out { right: 0; background: linear-gradient(to left, rgba(0,0,0,0.55), transparent); }

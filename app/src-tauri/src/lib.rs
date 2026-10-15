@@ -7,10 +7,10 @@ use std::path::{Path, PathBuf};
 use ms_import::ytdlp::{route, Route};
 use ms_media::encoders::QualityTier;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-use ms_ai::config::{AiSettings, ProviderConfig};
-use ms_ai::keys::{KeyStore, KeyringStore};
+use ms_ai::config::ProviderConfig;
+use ms_ai::keys::KeyringStore;
 use ms_media::export::{
     escape_filter_path, export_args, export_duration_ms, ExportOptions, Preset, SourceInfo,
 };
@@ -394,6 +394,7 @@ async fn auto_caption(
         };
         let n = clips.len() as f64;
         let mut cues = Vec::new();
+        let mut done: Vec<(u64, u64, PathBuf, Vec<whisper::Segment>)> = Vec::new();
         let result = (|| {
             for (k, (start, dur, source, src_in)) in clips.iter().enumerate() {
                 let meta = probe(source)?;
@@ -407,7 +408,7 @@ async fn auto_caption(
                     &whisper::extract_wav_args(source, *src_in, *dur, &wav),
                 )
                 .map_err(|e| e.to_string())?;
-                let mut segs = whisper::transcribe(
+                let segs = whisper::transcribe(
                     &tool("whisper-cli"),
                     &model_path,
                     &wav,
@@ -423,12 +424,23 @@ async fn auto_caption(
                     },
                 )
                 .map_err(|e| e.to_string())?;
-                if let Some((bin, seg, emb)) = &diar {
-                    let turns = ms_captions::diarize::run(bin, seg, emb, &wav, &cancel)?;
-                    ms_captions::diarize::assign_speakers(&mut segs, &turns);
-                    ms_captions::diarize::renumber_by_first_appearance(&mut segs);
+                done.push((*start, *dur, wav, segs));
+            }
+            // One diarization pass over every clip's audio joined end to end,
+            // so a voice keeps the same speaker id across clips.
+            if let (Some((bin, seg, emb)), false) = (&diar, done.is_empty()) {
+                use ms_captions::diarize;
+                let wavs: Vec<PathBuf> = done.iter().map(|d| d.2.clone()).collect();
+                let all = tmp.join("all.wav");
+                let durs = diarize::concat_wavs(&wavs, &all)?;
+                let turns = diarize::run(bin, seg, emb, &all, &cancel)?;
+                for (d, t) in done.iter_mut().zip(diarize::split_turns(&turns, &durs)) {
+                    diarize::assign_speakers(&mut d.3, &t);
                 }
-                cues.extend(place::place_segments(*start, *dur, &segs, 6));
+                diarize::renumber_by_first_appearance(done.iter_mut().flat_map(|d| d.3.iter_mut()));
+            }
+            for (start, dur, _, segs) in &done {
+                cues.extend(place::place_segments(*start, *dur, segs, 6));
             }
             Ok::<(), String>(())
         })();
@@ -467,61 +479,14 @@ async fn auto_caption(
 
 // ---- AI (bring your own key) ------------------------------------------------
 
-/// AI settings file (no secrets) + the OS keychain for keys.
-struct AiState {
-    path: PathBuf,
-    settings: Mutex<AiSettings>,
-}
-
-impl AiState {
-    fn load(path: PathBuf) -> Self {
-        let settings = std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|s| AiSettings::from_json(&s).ok())
-            .unwrap_or_default();
-        Self {
-            path,
-            settings: Mutex::new(settings),
-        }
-    }
-    fn save(&self, s: &AiSettings) -> Result<(), String> {
-        if let Some(dir) = self.path.parent() {
-            std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-        }
-        std::fs::write(&self.path, s.to_json()).map_err(|e| e.to_string())
-    }
-}
-
-#[derive(serde::Serialize)]
-struct ProviderView {
-    #[serde(flatten)]
-    config: ProviderConfig,
-    has_key: bool,
-}
-
-#[derive(serde::Serialize)]
-struct AiView {
-    providers: Vec<ProviderView>,
-    text_provider: Option<String>,
-}
-
-fn ai_view(s: &AiSettings) -> AiView {
-    AiView {
-        providers: s
-            .providers
-            .iter()
-            .map(|p| ProviderView {
-                config: p.clone(),
-                has_key: KeyringStore.get(&p.id).ok().flatten().is_some(),
-            })
-            .collect(),
-        text_provider: s.text_provider.clone(),
-    }
-}
+/// AI settings file (no secrets) + the OS keychain for keys. The logic
+/// lives in ms_ai::service (unit tested); these commands only adapt it.
+type AiState = ms_ai::service::AiService<KeyringStore>;
+use ms_ai::service::AiView;
 
 #[tauri::command]
 fn ai_settings(state: tauri::State<'_, AiState>) -> AiView {
-    ai_view(&state.settings.lock().unwrap())
+    state.view()
 }
 
 /// Save a provider. `key`: `Some("")` deletes the stored key, `None` keeps it.
@@ -532,44 +497,16 @@ fn ai_save_provider(
     key: Option<String>,
     make_default: bool,
 ) -> Result<AiView, String> {
-    let mut s = state.settings.lock().unwrap();
-    let id = config.id.clone();
-    s.upsert(config).map_err(|e| e.to_string())?;
-    match key.as_deref().map(str::trim) {
-        Some("") => KeyringStore.delete(&id).map_err(|e| e.to_string())?,
-        Some(k) => KeyringStore.set(&id, k).map_err(|e| e.to_string())?,
-        None => {}
-    }
-    if make_default {
-        s.text_provider = Some(id);
-    }
-    state.save(&s)?;
-    Ok(ai_view(&s))
+    state.save_provider(config, key, make_default)
 }
 
 #[tauri::command]
 fn ai_delete_provider(state: tauri::State<'_, AiState>, id: String) -> Result<AiView, String> {
-    let mut s = state.settings.lock().unwrap();
-    s.remove(&id);
-    KeyringStore.delete(&id).map_err(|e| e.to_string())?;
-    state.save(&s)?;
-    Ok(ai_view(&s))
+    state.delete_provider(&id)
 }
 
 fn ai_client(state: &AiState, id: Option<&str>) -> Result<(ms_ai::client::Client, String), String> {
-    let s = state.settings.lock().unwrap();
-    let id = id
-        .map(str::to_string)
-        .or_else(|| s.text_provider.clone())
-        .ok_or("Add an AI provider in Settings first.")?;
-    let cfg = s.get(&id).map_err(|e| e.to_string())?.clone();
-    drop(s);
-    let key = KeyringStore.get(&cfg.id).map_err(|e| e.to_string())?;
-    let model = cfg.model.clone();
-    Ok((
-        ms_ai::client::Client::new(&cfg, key).map_err(|e| e.to_string())?,
-        model,
-    ))
+    state.client(id)
 }
 
 #[tauri::command]
@@ -605,7 +542,7 @@ pub fn run() {
         .manage(CaptionState::default())
         .setup(|app| {
             let dir = app.path().app_config_dir()?;
-            app.manage(AiState::load(dir.join("ai-providers.json")));
+            app.manage(AiState::load(dir.join("ai-providers.json"), KeyringStore));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

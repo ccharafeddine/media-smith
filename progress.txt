@@ -64,3 +64,21 @@ presets, port GifSmith encoder and CaptionSmith whisper pipeline.
   Manager round trip (MS_KEYCHAIN_TEST=1).
 - Gaps: sherpa-onnx sidecar not yet in externalBin (checkbox disabled when
   absent); diarization untested on real audio; no real AI key test.
+
+2026-10-14 - Phase 6 (branch feat/phase-6, from feat/phase-5)
+- Speakers: real static sherpa-onnx 1.12.21 sidecar bundled (externalBin,
+  scripts/fetch-sherpa.sh pinned by SHA-256). One diarization pass over all
+  clips' audio joined end to end, so speaker ids agree across clips.
+  Segmentation archive now unpacked in-process (Windows tar.exe can't run
+  bzip2). Verified on a generated two-voice sample (Windows SAPI voices):
+  2 speakers, correct turns, consistent across two clips.
+- AI keys: settings + keychain logic moved to ms_ai::service (generic over
+  KeyStore) with tests; atomic settings writes; a failed keychain write no
+  longer changes settings; first provider becomes the default; Client's
+  Debug never prints the key.
+- Editor: edge fades (clips, overlays, text) exported with ffmpeg fade/afade
+  and libass \fad; text entrance animations (fade, pop, slide up); 4:5
+  Instagram/Facebook export preset; templates (TikTok captions, Shorts hook,
+  YouTube lower third, Instagram 4:5, square quote); redo; duplicate;
+  shortcut map + help overlay (?); autosave + crash recovery; timeline
+  renders only what's on screen; split now divides karaoke words + fades.

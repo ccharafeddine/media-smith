@@ -15,4 +15,7 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 sha2 = "0.10"
+# Unpack the diarization segmentation .tar.bz2 in-process (pure-Rust bzip2).
+tar = "0.4"
+bzip2 = "0.6"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "native-tls"], optional = true }

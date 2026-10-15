@@ -28,10 +28,10 @@ import { PRESET_SIZES, safeName } from "./types";
 
 describe("export presets and names", () => {
   it("matches the Rust preset sizes", () => {
-    expect(PRESET_SIZES).toEqual({ vertical: [1080, 1920], landscape: [1920, 1080], square: [1080, 1080], gif: [480, 480] });
+    expect(PRESET_SIZES).toEqual({ vertical: [1080, 1920], landscape: [1920, 1080], square: [1080, 1080], portrait: [1080, 1350], gif: [480, 480] });
   });
   it("desktop exports all presets, web only GIF", () => {
-    expect(getPlatform({ __TAURI_INTERNALS__: {} }).caps.exportPresets).toHaveLength(4);
+    expect(getPlatform({ __TAURI_INTERNALS__: {} }).caps.exportPresets).toHaveLength(5);
     expect(getPlatform({}).caps.exportPresets).toEqual(["gif"]);
   });
   it("sanitises file names", () => {

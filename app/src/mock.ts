@@ -9,6 +9,7 @@ export const PRESETS: { id: ExportPreset; label: string; w: number; h: number }[
   { id: "vertical", label: "9:16 · TikTok / Reels / Shorts", w: 1080, h: 1920 },
   { id: "landscape", label: "16:9 · YouTube", w: 1920, h: 1080 },
   { id: "square", label: "1:1 · Square", w: 1080, h: 1080 },
+  { id: "portrait", label: "4:5 · Instagram / Facebook feed", w: 1080, h: 1350 },
   { id: "gif", label: "GIF", w: 480, h: 480 },
 ];
 

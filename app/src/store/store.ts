@@ -11,11 +11,13 @@ export function createEditor(initial: M.Project = M.newProject()) {
   const [message, setMessage] = createSignal<string | null>(null);
   const [dirty, setDirty] = createSignal(false);
   const undo: M.Project[] = [];
+  const redo: M.Project[] = [];
 
   function apply(f: (p: M.Project) => M.Project): boolean {
     try {
       const next = f(project());
       undo.push(project());
+      redo.length = 0;
       if (undo.length > 100) undo.shift();
       setProject(next);
       setDirty(true);
@@ -38,6 +40,7 @@ export function createEditor(initial: M.Project = M.newProject()) {
     duration: () => M.duration(project()),
     load(p: M.Project) {
       undo.length = 0;
+      redo.length = 0;
       setProject(p);
       setSelected(null);
       setPlayhead(0);
@@ -116,8 +119,24 @@ export function createEditor(initial: M.Project = M.newProject()) {
     },
     undo() {
       const prev = undo.pop();
-      if (prev) setProject(prev);
+      if (prev) { redo.push(project()); setProject(prev); setDirty(true); }
       return !!prev;
+    },
+    redo() {
+      const next = redo.pop();
+      if (next) { undo.push(project()); setProject(next); setDirty(true); }
+      return !!next;
+    },
+    canUndo: () => undo.length > 0,
+    setFade: (id: string, f: M.Fade | null) => apply((p) => M.setFade(p, id, f)),
+    applyTemplate: (id: string) => apply((p) => M.applyTemplate(p, id, playhead())),
+    duplicateSelected() {
+      const id = selected();
+      if (!id) return setMessage("Select something to duplicate"), false;
+      let nid = "";
+      const ok = apply((p) => { const r = M.duplicateItem(p, id); nid = r.id; return r.project; });
+      if (ok) setSelected(nid);
+      return ok;
     },
   };
 }

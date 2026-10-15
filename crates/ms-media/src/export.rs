@@ -18,6 +18,8 @@ pub enum Preset {
     Landscape,
     /// 1080x1080.
     Square,
+    /// 1080x1350 (4:5): Instagram / Facebook feed.
+    Portrait,
     /// 480 px wide palette GIF at 15 fps, square canvas.
     Gif,
 }
@@ -28,6 +30,7 @@ impl Preset {
             Self::Vertical => (1080, 1920),
             Self::Landscape => (1920, 1080),
             Self::Square => (1080, 1080),
+            Self::Portrait => (1080, 1350),
             Self::Gif => (480, 480),
         }
     }
@@ -98,6 +101,25 @@ pub fn export_duration_ms(project: &Project) -> u64 {
         .map(|i| i.end_ms())
         .max()
         .unwrap_or(0)
+}
+
+/// `,fade=t=in:st=0:d=..,fade=t=out:st=..:d=..` (or `afade`) for edge fades
+/// on a stream that starts at 0 and lasts `dur_ms`. `alpha` fades
+/// transparency instead of to black (overlays).
+fn fade_filters(filter: &str, fin: u64, fout: u64, dur_ms: u64, alpha: bool) -> String {
+    let a = if alpha { ":alpha=1" } else { "" };
+    let mut f = String::new();
+    if fin > 0 {
+        f.push_str(&format!(",{filter}=t=in:st=0:d={}{a}", secs(fin)));
+    }
+    if fout > 0 {
+        f.push_str(&format!(
+            ",{filter}=t=out:st={}:d={}{a}",
+            secs(dur_ms - fout),
+            secs(fout)
+        ));
+    }
+    f
 }
 
 /// Build the ffmpeg argument list for exporting `project` to `output`.
@@ -180,13 +202,16 @@ pub fn export_args(
             .ok_or_else(|| ExportError::UnknownSource(source.clone()))?;
         let i = push_input(&mut args, source, *source_in_ms, it.duration_ms)?;
         let k = segments;
+        let (fin, fout) = it.fades();
+        let vfade = fade_filters("fade", fin, fout, it.duration_ms, false);
         graph.push(format!(
-            "[{i}:v]scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={fps},format=yuv420p[v{k}]"
+            "[{i}:v]scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={fps},format=yuv420p{vfade}[v{k}]"
         ));
         if !gif {
             if info.has_audio {
+                let afade = fade_filters("afade", fin, fout, it.duration_ms, false);
                 graph.push(format!(
-                    "[{i}:a]aresample=48000,volume={volume},aformat=channel_layouts=stereo[a{k}]"
+                    "[{i}:a]aresample=48000,volume={volume},aformat=channel_layouts=stereo{afade}[a{k}]"
                 ));
             } else {
                 graph.push(format!(
@@ -231,8 +256,10 @@ pub fn export_args(
         let ow = ((w as f32 * t.scale) as u32 / 2 * 2).max(2);
         let start = secs(it.start_ms);
         let end = secs(it.end_ms().min(timeline_end));
+        let (fin, fout) = it.fades();
+        let ofade = fade_filters("fade", fin, fout, it.duration_ms, true);
         graph.push(format!(
-            "[{i}:v]scale={ow}:-2,setsar=1,fps={fps},format=yuva420p,colorchannelmixer=aa={:.3},setpts=PTS-STARTPTS+{start}/TB[o{i}]",
+            "[{i}:v]scale={ow}:-2,setsar=1,fps={fps},format=yuva420p,colorchannelmixer=aa={:.3}{ofade},setpts=PTS-STARTPTS+{start}/TB[o{i}]",
             t.opacity
         ));
         overlay_steps.push((i, t, start, end));
@@ -674,6 +701,7 @@ mod tests {
             Preset::Vertical,
             Preset::Landscape,
             Preset::Square,
+            Preset::Portrait,
             Preset::Gif,
         ] {
             let out = dir
@@ -799,5 +827,63 @@ mod tests {
         .unwrap();
         assert!(graph(&a).contains("[ma]anull[outa]"));
         assert!(!a.join(" ").contains("m.mp3"));
+    }
+
+    #[test]
+    fn edge_fades_and_portrait_preset() {
+        assert_eq!(Preset::Portrait.size(), (1080, 1350));
+        assert_eq!(fade_filters("fade", 0, 0, 1000, false), "");
+        assert_eq!(
+            fade_filters("afade", 500, 250, 3000, false),
+            ",afade=t=in:st=0:d=0.500,afade=t=out:st=2.750:d=0.250"
+        );
+        assert_eq!(
+            fade_filters("fade", 200, 0, 1000, true),
+            ",fade=t=in:st=0:d=0.200:alpha=1"
+        );
+        let mut p = Project::new("t", 1080, 1350, 30);
+        let v = p.add_track(TrackKind::Video, "V");
+        let id = p
+            .add_item(
+                &v,
+                0,
+                3000,
+                ItemKind::Clip {
+                    source: "a.mp4".into(),
+                    source_in_ms: 0,
+                    volume: 1.0,
+                },
+            )
+            .unwrap();
+        p.set_fade(
+            &id,
+            Some(ms_project::Fade {
+                in_ms: 500,
+                out_ms: 1000,
+            }),
+        )
+        .unwrap();
+        let mut s = HashMap::new();
+        s.insert("a.mp4".to_string(), SourceInfo { has_audio: true });
+        let a = export_args(
+            &p,
+            Preset::Portrait,
+            &s,
+            VideoEncoder::X264,
+            QualityTier::High,
+            &ExportOptions::default(),
+            "o.mp4",
+        )
+        .unwrap();
+        let g = a.join(" ");
+        assert!(g.contains("pad=1080:1350"), "{g}");
+        assert!(
+            g.contains("format=yuv420p,fade=t=in:st=0:d=0.500,fade=t=out:st=2.000:d=1.000[v0]"),
+            "{g}"
+        );
+        assert!(
+            g.contains("afade=t=in:st=0:d=0.500,afade=t=out:st=2.000:d=1.000[a0]"),
+            "{g}"
+        );
     }
 }

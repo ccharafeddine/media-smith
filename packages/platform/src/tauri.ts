@@ -23,7 +23,7 @@ export const tauriPlatform: Platform = {
     hardwareEncode: true,
     transcribe: "native",
     maxInputBytes: Number.MAX_SAFE_INTEGER,
-    exportPresets: ["vertical", "landscape", "square", "gif"],
+    exportPresets: ["vertical", "landscape", "square", "portrait", "gif"],
   },
   newProject: (name, width, height, fps) => invoke<string>("new_project", { name, width, height, fps }),
   classifyUrl: (url) => invoke<string>("classify_url", { url }),

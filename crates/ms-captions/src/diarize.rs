@@ -107,12 +107,11 @@ pub fn assign_speakers(segments: &mut [Segment], turns: &[Turn]) {
     }
 }
 
-/// Renumber speakers in order of first appearance across several clips'
-/// results is not possible (clusters are per run); within one run, make
-/// "Speaker 1" the first voice heard.
-pub fn renumber_by_first_appearance(segments: &mut [Segment]) {
+/// Make "Speaker 1" the first voice heard (ids come from one clustering run
+/// over all clips, see [`concat_wavs`], so they agree across clips).
+pub fn renumber_by_first_appearance<'a>(segments: impl IntoIterator<Item = &'a mut Segment>) {
     let mut map: HashMap<u32, u32> = HashMap::new();
-    for s in segments.iter_mut() {
+    for s in segments {
         if let Some(sp) = s.speaker {
             let next = map.len() as u32;
             s.speaker = Some(*map.entry(sp).or_insert(next));
@@ -258,10 +257,109 @@ pub fn find_file(dir: &Path, name: &str) -> Option<PathBuf> {
     None
 }
 
+/// Pull `model.onnx` out of the segmentation `.tar.bz2` in-process (the
+/// Windows `tar.exe` can't always run bzip2, so the system tool isn't used).
+pub fn extract_seg_model(archive: &Path, dest: &Path) -> Result<(), String> {
+    let f = std::fs::File::open(archive).map_err(|e| format!("open archive: {e}"))?;
+    let mut ar = tar::Archive::new(bzip2::read::BzDecoder::new(std::io::BufReader::new(f)));
+    let entries = ar.entries().map_err(|e| format!("read archive: {e}"))?;
+    for entry in entries {
+        let mut entry = entry.map_err(|e| format!("read archive: {e}"))?;
+        let is_model = entry
+            .path()
+            .ok()
+            .and_then(|p| p.file_name().map(|n| n == "model.onnx"))
+            .unwrap_or(false);
+        if is_model {
+            let mut part = dest.as_os_str().to_owned();
+            part.push(".part");
+            let part = PathBuf::from(part);
+            let mut out = std::fs::File::create(&part).map_err(|e| format!("create: {e}"))?;
+            std::io::copy(&mut entry, &mut out).map_err(|e| format!("extract: {e}"))?;
+            drop(out);
+            return std::fs::rename(&part, dest).map_err(|e| format!("finalize: {e}"));
+        }
+    }
+    Err("model.onnx not found in the segmentation archive.".into())
+}
+
+/// Join 16 kHz mono 16-bit PCM WAVs end to end into `out` so one diarization
+/// pass sees every clip (speaker ids then agree across clips). Returns each
+/// input's duration in ms, for [`split_turns`].
+pub fn concat_wavs(inputs: &[PathBuf], out: &Path) -> Result<Vec<u64>, String> {
+    use std::io::Write;
+    let mut pcm: Vec<u8> = Vec::new();
+    let mut durs = Vec::new();
+    for p in inputs {
+        let b = std::fs::read(p).map_err(|e| format!("read {}: {e}", p.display()))?;
+        let data = wav_data(&b).ok_or_else(|| format!("{} is not a PCM WAV", p.display()))?;
+        durs.push(data.len() as u64 * 1000 / (16_000 * 2));
+        pcm.extend_from_slice(data);
+    }
+    let mut f = std::fs::File::create(out).map_err(|e| e.to_string())?;
+    let len = pcm.len() as u32;
+    let mut h = Vec::with_capacity(44);
+    h.extend_from_slice(b"RIFF");
+    h.extend_from_slice(&(36 + len).to_le_bytes());
+    h.extend_from_slice(b"WAVEfmt ");
+    h.extend_from_slice(&16u32.to_le_bytes());
+    h.extend_from_slice(&1u16.to_le_bytes()); // PCM
+    h.extend_from_slice(&1u16.to_le_bytes()); // mono
+    h.extend_from_slice(&16_000u32.to_le_bytes());
+    h.extend_from_slice(&32_000u32.to_le_bytes());
+    h.extend_from_slice(&2u16.to_le_bytes());
+    h.extend_from_slice(&16u16.to_le_bytes());
+    h.extend_from_slice(b"data");
+    h.extend_from_slice(&len.to_le_bytes());
+    f.write_all(&h)
+        .and_then(|_| f.write_all(&pcm))
+        .map_err(|e| e.to_string())?;
+    Ok(durs)
+}
+
+/// The `data` chunk of a RIFF/WAVE file.
+fn wav_data(b: &[u8]) -> Option<&[u8]> {
+    if b.len() < 12 || &b[0..4] != b"RIFF" || &b[8..12] != b"WAVE" {
+        return None;
+    }
+    let mut i = 12;
+    while i + 8 <= b.len() {
+        let id = &b[i..i + 4];
+        let n = u32::from_le_bytes(b[i + 4..i + 8].try_into().ok()?) as usize;
+        let body = i + 8;
+        if id == b"data" {
+            return Some(&b[body..(body + n).min(b.len())]);
+        }
+        i = body + n + (n & 1);
+    }
+    None
+}
+
+/// Cut turns from a concatenated run back into per-input turns, each
+/// relative to its own input. Turns spanning a boundary are split.
+pub fn split_turns(turns: &[Turn], durs: &[u64]) -> Vec<Vec<Turn>> {
+    let mut out = Vec::with_capacity(durs.len());
+    let mut off = 0u64;
+    for &d in durs {
+        let end = off + d;
+        out.push(
+            turns
+                .iter()
+                .filter(|t| t.end_ms > off && t.start_ms < end)
+                .map(|t| Turn {
+                    start_ms: t.start_ms.max(off) - off,
+                    end_ms: t.end_ms.min(end) - off,
+                    speaker: t.speaker,
+                })
+                .collect(),
+        );
+        off = end;
+    }
+    out
+}
+
 /// Download (and verify) whichever of the two models is missing in `dir`.
-/// `progress(step, label, received, total)`; step is 1 or 2. The
-/// segmentation archive is unpacked with the system `tar` (bsdtar on
-/// Windows 10+ and macOS reads bzip2).
+/// `progress(step, label, received, total)`; step is 1 or 2.
 #[cfg(feature = "download")]
 pub fn download_models(
     dir: &Path,
@@ -291,25 +389,7 @@ pub fn download_models(
         install_verified(r, &archive, SEG_ARCHIVE_SHA256, total, cancel, |g, t| {
             progress(1, "segmentation model", g, t)
         })?;
-        let tmp = dir.join("seg-extract");
-        let _ = std::fs::remove_dir_all(&tmp);
-        std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
-        let mut cmd = Command::new("tar");
-        cmd.arg("xf").arg(&archive).arg("-C").arg(&tmp);
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            cmd.creation_flags(0x0800_0000);
-        }
-        let ok = cmd.status().map(|s| s.success()).unwrap_or(false);
-        let found = find_file(&tmp, "model.onnx");
-        let res = match (ok, found) {
-            (true, Some(f)) => std::fs::copy(&f, &seg)
-                .map(|_| ())
-                .map_err(|e| format!("could not save the model: {e}")),
-            _ => Err("could not extract the segmentation model archive.".into()),
-        };
-        let _ = std::fs::remove_dir_all(&tmp);
+        let res = extract_seg_model(&archive, &seg);
         let _ = std::fs::remove_file(&archive);
         res?;
     }
@@ -519,5 +599,145 @@ mod tests {
         );
         assert!(t.elapsed() < Duration::from_secs(3));
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn concat_and_split_keep_speakers_consistent_across_clips() {
+        let d = std::env::temp_dir().join(format!("ms-diar-cat-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let mk = |name: &str, ms: u64| {
+            let p = d.join(name);
+            let src = d.join("src.wav");
+            let samples = vec![0u8; (ms * 32) as usize];
+            concat_wavs(&[], &src).unwrap();
+            // Build a one-input WAV by hand through concat of raw data.
+            let mut b = std::fs::read(&src).unwrap();
+            b.truncate(40);
+            b.extend_from_slice(&(samples.len() as u32).to_le_bytes());
+            b.extend_from_slice(&samples);
+            std::fs::write(&p, b).unwrap();
+            p
+        };
+        let (a, b) = (mk("a.wav", 1500), mk("b.wav", 2000));
+        let out = d.join("all.wav");
+        assert_eq!(concat_wavs(&[a, b], &out).unwrap(), vec![1500, 2000]);
+        assert_eq!(
+            wav_data(&std::fs::read(&out).unwrap()).unwrap().len(),
+            3500 * 32
+        );
+        assert!(concat_wavs(&[d.join("missing.wav")], &out).is_err());
+        std::fs::write(d.join("junk.wav"), b"not a wav").unwrap();
+        assert!(concat_wavs(&[d.join("junk.wav")], &out)
+            .unwrap_err()
+            .contains("not a PCM WAV"));
+        let turns = [
+            Turn {
+                start_ms: 0,
+                end_ms: 1000,
+                speaker: 3,
+            },
+            Turn {
+                start_ms: 1000,
+                end_ms: 2500,
+                speaker: 7,
+            },
+            Turn {
+                start_ms: 2500,
+                end_ms: 3500,
+                speaker: 3,
+            },
+        ];
+        let parts = split_turns(&turns, &[1500, 2000]);
+        assert_eq!(
+            parts[0],
+            vec![
+                Turn {
+                    start_ms: 0,
+                    end_ms: 1000,
+                    speaker: 3
+                },
+                Turn {
+                    start_ms: 1000,
+                    end_ms: 1500,
+                    speaker: 7
+                }
+            ]
+        );
+        assert_eq!(
+            parts[1],
+            vec![
+                Turn {
+                    start_ms: 0,
+                    end_ms: 1000,
+                    speaker: 7
+                },
+                Turn {
+                    start_ms: 1000,
+                    end_ms: 2000,
+                    speaker: 3
+                }
+            ]
+        );
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn extracts_model_from_a_tar_bz2() {
+        use std::io::Write;
+        let d = std::env::temp_dir().join(format!("ms-diar-bz-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let arc = d.join("seg.tar.bz2");
+        {
+            let f = std::fs::File::create(&arc).unwrap();
+            let enc = bzip2::write::BzEncoder::new(f, bzip2::Compression::fast());
+            let mut t = tar::Builder::new(enc);
+            for (name, body) in [
+                ("pkg/README.md", &b"hi"[..]),
+                ("pkg/model.onnx", &b"ONNX"[..]),
+            ] {
+                let mut h = tar::Header::new_gnu();
+                h.set_size(body.len() as u64);
+                h.set_mode(0o644);
+                h.set_cksum();
+                t.append_data(&mut h, name, body).unwrap();
+            }
+            t.into_inner().unwrap().finish().unwrap().flush().unwrap();
+        }
+        let dest = d.join(SEG_MODEL);
+        extract_seg_model(&arc, &dest).unwrap();
+        assert_eq!(std::fs::read(&dest).unwrap(), b"ONNX");
+        std::fs::write(&arc, b"garbage").unwrap();
+        assert!(extract_seg_model(&arc, &d.join("x.onnx")).is_err());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// Real engine on real speech. Opt-in: MS_SHERPA (binary),
+    /// MS_DIAR_MODELS (folder with segmentation.onnx + embedding.onnx),
+    /// MS_DIAR_WAV (16 kHz mono WAV) and MS_DIAR_SPEAKERS (expected count).
+    #[test]
+    fn real_diarization_when_available() {
+        let (Ok(bin), Ok(dir), Ok(wav)) = (
+            std::env::var("MS_SHERPA"),
+            std::env::var("MS_DIAR_MODELS"),
+            std::env::var("MS_DIAR_WAV"),
+        ) else {
+            return;
+        };
+        let (s, e) = resolve_models(Path::new(&dir)).unwrap();
+        let turns = run(
+            Path::new(&bin),
+            &s,
+            &e,
+            Path::new(&wav),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        assert!(!turns.is_empty());
+        if let Ok(n) = std::env::var("MS_DIAR_SPEAKERS") {
+            let mut ids: Vec<u32> = turns.iter().map(|t| t.speaker).collect();
+            ids.sort();
+            ids.dedup();
+            assert_eq!(ids.len(), n.parse::<usize>().unwrap(), "{turns:?}");
+        }
     }
 }

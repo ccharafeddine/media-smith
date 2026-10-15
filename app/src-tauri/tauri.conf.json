@@ -45,7 +45,8 @@
       "binaries/ffmpeg",
       "binaries/ffprobe",
       "binaries/yt-dlp",
-      "binaries/whisper-cli"
+      "binaries/whisper-cli",
+      "binaries/sherpa-onnx-offline-speaker-diarization"
     ],
     "resources": [
       "resources/fonts/*",

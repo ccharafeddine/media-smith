@@ -8,7 +8,7 @@ BIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/app/src-tauri/binaries
 TRIPLE="${TARGET_TRIPLE:-$(rustc -vV | sed -n 's/host: //p')}"
 EXT=""; [[ "$TRIPLE" == *windows* ]] && EXT=".exe"
 mkdir -p "$BIN_DIR"
-for n in ffmpeg ffprobe yt-dlp whisper-cli; do
+for n in ffmpeg ffprobe yt-dlp whisper-cli sherpa-onnx-offline-speaker-diarization; do
   f="$BIN_DIR/$n-$TRIPLE$EXT"
   [ -e "$f" ] || { : > "$f"; chmod +x "$f"; echo "placeholder: $f"; }
 done

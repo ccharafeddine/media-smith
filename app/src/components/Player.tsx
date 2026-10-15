@@ -2,7 +2,8 @@ import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
 import { formatTime } from "@mediasmith/ui";
 import type { Platform } from "@mediasmith/platform";
 import type { Editor } from "../store/store";
-import { clipAt, dragPosition, karaokeWords, overlaysAt, textsAt } from "../store/model";
+import { clipAt, dragPosition, fadeOpacity, karaokeWords, overlaysAt, textsAt } from "../store/model";
+import { isTypingTarget } from "../lib/shortcuts";
 
 /** Plays the main video track: shows the clip under the playhead at the
  *  right source time, and drives the playhead from a clock while playing. */
@@ -62,8 +63,8 @@ export function Player(props: { editor: Editor; platform: Platform; aspect: stri
   /** Nudge the selected text layer with arrow keys (Shift = 10x). */
   function onKeyDown(ev: KeyboardEvent) {
     const t = texts().find((x) => x.id === e.selected());
-    if (!t || !ev.key.startsWith("Arrow")) return;
-    if ((ev.target as HTMLElement)?.closest?.("input, textarea, select")) return;
+    if (!t || !ev.key.startsWith("Arrow") || ev.ctrlKey || ev.metaKey) return;
+    if (isTypingTarget(ev.target)) return;
     ev.preventDefault();
     const px = ev.shiftKey ? 10 : 1;
     const dx = ev.key === "ArrowLeft" ? -px : ev.key === "ArrowRight" ? px : 0;
@@ -73,6 +74,10 @@ export function Player(props: { editor: Editor; platform: Platform; aspect: stri
   }
   window.addEventListener("keydown", onKeyDown);
   onCleanup(() => window.removeEventListener("keydown", onKeyDown));
+  // App-level shortcuts (Space) drive playback through this event.
+  const toggle = () => (playing() ? stop() : play());
+  window.addEventListener("ms:toggle-play", toggle);
+  onCleanup(() => window.removeEventListener("ms:toggle-play", toggle));
 
   createEffect(() => {
     const c = current();
@@ -107,20 +112,20 @@ export function Player(props: { editor: Editor; platform: Platform; aspect: stri
   return (
     <main class="ms-stage">
       <div class="canvas" ref={canvas} style={{ "aspect-ratio": props.aspect }}>
-        <video ref={video} class="frame-video" playsinline />
+        <video ref={video} class="frame-video" playsinline style={{ opacity: current() ? fadeOpacity(current()!.item, e.playhead()) : 1 }} />
         <For each={overlays()}>{(o) => (
           <OverlayVideo url={props.platform.mediaUrl(o.item.source)} sourceMs={o.sourceMs} playing={playing()}
-            style={{ left: `${o.transform.x * 100}%`, top: `${o.transform.y * 100}%`, width: `${o.transform.scale * 100}%`, opacity: o.transform.opacity }} />
+            style={{ left: `${o.transform.x * 100}%`, top: `${o.transform.y * 100}%`, width: `${o.transform.scale * 100}%`, opacity: o.transform.opacity * fadeOpacity(o.item, e.playhead()) }} />
         )}</For>
         <Show when={drag()?.snapX}><i class="snap-guide v" /></Show>
         <Show when={drag()?.snapY}><i class="snap-guide h" /></Show>
         <For each={texts()}>{(t) => (
-          <div class={`text-layer ${e.selected() === t.id ? "sel" : ""} ${drag()?.id === t.id ? "dragging" : ""}`}
+          <div class={`text-layer anim-${t.style.anim ?? "none"} ${e.selected() === t.id ? "sel" : ""} ${drag()?.id === t.id ? "dragging" : ""}`}
             onPointerDown={(ev) => startDrag(ev, t.id, t.style.x, t.style.y)}
             title="Drag to move (Alt: no snapping, arrows to nudge)"
             style={{
               left: `${pos(t).x * 100}%`, top: `${pos(t).y * 100}%`, "font-family": `${t.style.font}, sans-serif`,
-              "font-size": `${t.style.size_px * k()}px`, color: t.style.color,
+              "font-size": `${t.style.size_px * k()}px`, color: t.style.color, opacity: fadeOpacity(t, e.playhead()),
               "-webkit-text-stroke": t.style.stroke ? `${Math.max(1, 3 * k())}px ${t.style.stroke}` : undefined,
             }}>
             <Show when={t.style.highlight ? karaokeWords(t, e.playhead()) : null} fallback={t.text}>{(ws) => (
