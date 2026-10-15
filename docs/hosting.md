@@ -17,7 +17,6 @@ On Windows PowerShell, run `$env:SMITH_SITE="clip"; npm run build -w @mediasmith
 - `index.html`, built with base `/`. It includes the canonical URL, description,
   Open Graph and Twitter card meta, and `og.png` (1200x630).
 - `404.html`, a copy of `index.html`, for hosts like GitHub Pages.
-- `_redirects` with `/* /index.html 200`, the SPA fallback for Cloudflare Pages.
 - `_headers`, needed. See below.
 - `ffmpeg/`, the video engine:
   - `ffmpeg-core.js`;
@@ -26,8 +25,8 @@ On Windows PowerShell, run `$env:SMITH_SITE="clip"; npm run build -w @mediasmith
   - `manifest.json`.
 - `assets/`, the hashed JS, CSS, fonts and sample clip.
 
-Every build is about 33 MB. The largest single file is 20 MiB, under Cloudflare
-Pages' 25 MiB per-file limit.
+Every build is about 33 MB. The largest single file is 20 MiB, under the Cloudflare
+25 MiB per-file limit.
 
 ## Required headers
 
@@ -39,10 +38,31 @@ Pages' 25 MiB per-file limit.
 ```
 
 These keep ffmpeg.wasm cross-origin isolated (`crossOriginIsolated === true`).
-Cloudflare Pages applies them from `_headers` automatically; on other hosts,
+Workers static assets applies them from `_headers` automatically (including to the
+SPA fallback, because rules match the request URL); on other hosts,
 configure them by hand. The builds load nothing from other origins. If a demo is
 ever embedded in an iframe on another page, that page needs compatible
 COOP/COEP headers too, so linking to the subdomain is simpler.
+
+## Deploying with Workers static assets
+
+Each repo has a root `wrangler.jsonc` with no routes. It serves `./web/dist` as static assets:
+
+```jsonc
+{
+  "name": "mediasmith", // clipsmith, gifsmith, captionsmith in the other repos
+  "compatibility_date": "2026-10-01",
+  "assets": { "directory": "./web/dist", "not_found_handling": "single-page-application" }
+}
+```
+
+- `not_found_handling: single-page-application` serves `index.html` (status 200) for unknown
+  paths, so deep links work. This replaces the old `_redirects` file, which the builds no longer ship.
+- `_headers` is read by Workers static assets and is not served itself. It only applies to asset
+  responses; there is no Worker script, so every response gets the COOP/COEP headers.
+- Attach the custom domain (for example `media.chafic.me`) to the Worker in the dashboard or by adding
+  `routes` later. The config deliberately has none.
+- Static assets allow 25 MiB per file, which the split engine fits.
 
 ## Known limits
 

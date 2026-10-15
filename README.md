@@ -62,7 +62,7 @@ Both builds are static. They use ffmpeg.wasm with local files only: no server an
 | Editor | `npm run build -w @mediasmith/app` | `app/dist/` (~33 MB) |
 | ClipSmith, GifSmith, CaptionSmith demos | `npm run build -w @mediasmith/smiths-web` | `apps/smiths-web/dist/` (~33 MB) |
 
-The ~31 MiB wasm core is split into parts under Cloudflare Pages' 25 MiB per-file
+The ~31 MiB wasm core is split into parts under Cloudflare's 25 MiB per-file
 limit and joined at runtime. [`docs/web.md`](docs/web.md) lists what works in the
 browser and what is desktop only.
 

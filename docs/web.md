@@ -27,9 +27,9 @@ Preview locally with `npx vite preview` in `app/` or `apps/smiths-web/`. It send
 isolation headers below. Opening `index.html` from `file://` does not work,
 because the engine has to be fetched.
 
-## 2. The 25 MiB Cloudflare Pages limit
+## 2. The 25 MiB Cloudflare static-asset limit
 
-Pages rejects any single file over 25 MiB, and the ffmpeg.wasm core is 32,232,419
+Cloudflare (Workers static assets and Pages) rejects any single file over 25 MiB, and the ffmpeg.wasm core is 32,232,419
 bytes (about 30.7 MiB). The `ffmpegCore()` Vite plugin
 (`packages/platform/vite-ffmpeg.mjs`) handles this at build time. It:
 
@@ -47,7 +47,7 @@ The desktop build skips the plugin (`TAURI_ENV_PLATFORM` is set during
 
 ## 3. Headers
 
-`public/_headers` (Cloudflare Pages format) is copied into both builds:
+`public/_headers` (Cloudflare `_headers` format, read by Workers static assets) is copied into both builds:
 
 ```
 /*

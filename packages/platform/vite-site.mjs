@@ -1,8 +1,9 @@
 // Vite plugin: turn a build into a standalone site for its own (sub)domain root.
 // - injects description, Open Graph and Twitter card meta (absolute og:image)
 // - promotes `page` (e.g. "clip.html") to index.html
-// - writes Cloudflare Pages `_headers` (cross-origin isolation for ffmpeg.wasm)
-//   and `_redirects` (SPA fallback), plus 404.html for hosts like GitHub Pages
+// - writes `_headers` (cross-origin isolation for ffmpeg.wasm), read by Workers static assets,
+//   plus 404.html for hosts like GitHub Pages. The SPA fallback comes from wrangler.jsonc
+//   (`not_found_handling: single-page-application`), so no `_redirects` is written.
 // Used by `SMITH_SITE=<app> vite build` (see docs/web.md).
 import { copyFileSync, existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -54,7 +55,6 @@ export default function smithSite(o) {
         if (existsSync(from)) renameSync(from, join(outDir, "index.html"));
       }
       writeFileSync(join(outDir, "_headers"), HEADERS);
-      writeFileSync(join(outDir, "_redirects"), "/* /index.html 200\n");
       copyFileSync(join(outDir, "index.html"), join(outDir, "404.html"));
       copyFileSync(o.og, join(outDir, "og.png"));
       const html = readFileSync(join(outDir, "index.html"), "utf8");
