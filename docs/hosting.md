@@ -44,6 +44,31 @@ configure them by hand. The builds load nothing from other origins. If a demo is
 ever embedded in an iframe on another page, that page needs compatible
 COOP/COEP headers too, so linking to the subdomain is simpler.
 
+## Building for another domain
+
+The only place a build names a domain is the absolute meta in `index.html` and `404.html`:
+`<link rel="canonical">`, `og:url`, `og:image` and `twitter:image`. By default they point at
+the chafic.me subdomain from `packages/ui/src/sites.mjs` (for example `https://clip.chafic.me/`
+and `https://clip.chafic.me/og.png`), and the committed `web/dist` builds use that default.
+
+To host a build somewhere else, set `SMITH_SITE_URL` to the site's public URL when you build:
+
+```sh
+SMITH_SITE=clip SMITH_SITE_URL=https://clips.example.com npm run build -w @mediasmith/smiths-web
+SMITH_SITE=media SMITH_SITE_URL=https://video.example.com/ npm run build -w @mediasmith/app
+```
+
+On Windows PowerShell: `="clip"; ="https://clips.example.com"; npm run build -w @mediasmith/smiths-web`
+(then `Remove-Item Env:SMITH_SITE_URL` to go back to the default).
+
+- It must be an absolute `http(s)` URL with no query or fragment; a trailing `/` is added if missing.
+  Anything else stops the build with an error.
+- Leave it unset (or empty) for the default chafic.me URL.
+- It changes only those four tags. The asset paths stay root-relative (base `/`), so the build still
+  has to be served from the root of its domain or subdomain.
+- Everything else (`_headers`, `wrangler.jsonc`, the app itself) is domain-independent. Rename the
+  Worker in `wrangler.jsonc` if you deploy a second copy under the same account.
+
 ## Deploying with Workers static assets
 
 Each repo has a root `wrangler.jsonc` with no routes. It serves `./web/dist` as static assets:
