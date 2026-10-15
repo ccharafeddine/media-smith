@@ -6,7 +6,8 @@
   "license": "GPL-3.0-or-later",
   "main": "src/index.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./vite-ffmpeg": "./vite-ffmpeg.mjs"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
@@ -16,6 +17,7 @@
     "@ffmpeg/ffmpeg": "^0.12.15",
     "@ffmpeg/util": "^0.12.2",
     "@tauri-apps/api": "^2",
-    "@tauri-apps/plugin-dialog": "^2.7.1"
+    "@tauri-apps/plugin-dialog": "^2.7.1",
+    "@ffmpeg/core": "^0.12.10"
   }
 }

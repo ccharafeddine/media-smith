@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en" data-app="captionsmith">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Style captions and burn them into video in your browser. Nothing is uploaded." />
+    <link rel="icon" type="image/svg+xml" href="./captionsmith.svg" />
+    <title>CaptionSmith web demo</title>
+  </head>
+  <body class="sm-app">
+    <main class="page">
+      <section class="stage">
+        <label class="sm-drop drop-card" id="drop">
+          <input type="file" id="file" accept="video/*,.mkv" hidden />
+          <span class="sm-empty__art" aria-hidden="true">Aa</span>
+          <h3>Caption a video</h3>
+          <p>Import or type captions, style them, and export SRT, VTT or an MP4 with them burned in.</p>
+          <span class="sm-btn sm-btn--primary sm-btn--lg">Open video…</span>
+          <small>MP4 · MOV · WEBM · MKV, up to 500 MB · or drop it anywhere</small>
+          <button type="button" class="sm-btn sm-btn--ghost sm-btn--sm" id="sample">Try the sample clip</button>
+        </label>
+        <div class="player" id="player" hidden>
+          <video id="video" controls playsinline></video>
+          <div class="cap-overlay" id="overlay"></div>
+        </div>
+        <p class="meta sm-num" id="meta" hidden></p>
+      </section>
+      <aside class="panel sm-panel" id="panel" hidden>
+        <div class="sm-panel__head">Captions <span class="sm-num" id="count"></span></div>
+        <div class="row">
+          <button type="button" class="sm-btn sm-btn--sm" id="importSubs">Import .srt / .vtt</button>
+          <button type="button" class="sm-btn sm-btn--sm" id="addCue">Add at playhead</button>
+          <input type="file" id="subsFile" accept=".srt,.vtt,text/vtt" hidden />
+        </div>
+        <ol class="cues" id="cues"></ol>
+        <p class="hint">Automatic transcription runs with a local Whisper model in the desktop app. Here, import a subtitle file or type captions in.</p>
+        <div class="sm-panel__head">Style</div>
+        <div class="grid2">
+          <label class="sm-field"><span>Font</span><select class="sm-input" id="font"><option>Inter</option><option>Syne</option></select></label>
+          <label class="sm-field"><span>Size</span><select class="sm-input" id="size"><option value="4.5">Small</option><option value="6" selected>Medium</option><option value="8">Large</option></select></label>
+          <label class="sm-field"><span>Colour</span><input class="sm-input" id="color" type="color" value="#ffffff" /></label>
+          <label class="sm-field"><span>Background</span><select class="sm-input" id="box"><option value="1">Box</option><option value="0">Outline</option></select></label>
+        </div>
+        <div class="sm-seg" id="pos" role="group"><button type="button" data-v="top" aria-pressed="false">Top</button><button type="button" data-v="middle" aria-pressed="false">Middle</button><button type="button" data-v="bottom" aria-pressed="true">Bottom</button></div>
+        <div class="sm-panel__head">Export</div>
+        <div class="row">
+          <button type="button" class="sm-btn" id="srt">.srt</button>
+          <button type="button" class="sm-btn" id="vtt">.vtt</button>
+          <button type="button" class="sm-btn sm-btn--primary go" id="go">Burn into MP4</button>
+        </div>
+        <div class="status" id="status" hidden><span class="st-text"></span><div class="sm-progress" hidden><i></i></div></div>
+        <div class="result" id="result" hidden></div>
+      </aside>
+    </main>
+    <script type="module" src="./src/caption.ts"></script>
+  </body>
+</html>

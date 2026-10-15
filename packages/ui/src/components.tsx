@@ -30,7 +30,7 @@ export function Wordmark(props: { app: SmithApp }) {
   return (
     <span class="sm-wordmark">
       <img src={markDataUrl(props.app)} alt="" />
-      <span><span class="app">{a().prefix}</span><span class="smith">Smith</span></span>
+      <span><span class="wm-app">{a().prefix}</span><span class="wm-smith">Smith</span></span>
     </span>
   );
 }

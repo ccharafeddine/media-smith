@@ -97,12 +97,36 @@ All four marks share the same tile, frame and trim notches, plus a cyan spark at
 - **Colour and motion:** speaker and track colours always come with a label (S1, "Video"). Reduced motion is respected.
 - **Hit targets:** at least 24 px, with a 32 px default.
 
-## 9. Product direction
+## 9. Offline first
+
+Every feature has a fully local path. Nothing requires an internet connection or
+an account. Network use is always optional and always labelled.
+
+| Need | Local path (always works) | Optional online path |
+|---|---|---|
+| Get media in | Open or drop a local file. Every empty state leads with "Open video…". | Link import (yt-dlp), labelled "optional, needs internet" |
+| Captions (MediaSmith, CaptionSmith) | Bundled Whisper model; "Import model file…" installs a `ggml-*.bin` you already have, recognised by SHA-256 so renaming doesn't matter; SRT/VTT import; typing captions | One-time model download from the whisper.cpp host |
+| Speaker labels (MediaSmith) | "Import speaker model…" installs the segmentation and embedding models from disk (SHA-verified) | One-time download |
+| AI rewrite and suggestions | Optional. Ollama on localhost is the default provider. Without a provider the feature just stays hidden or disabled with a note, and nothing else changes | Any OpenAI-compatible provider the user configures |
+| Fonts | Bundled (Inter, Syne, OFL), also inside the web engine for burn-in | None |
+| Sample and templates | Bundled sample clip and project | None |
+| Web demos | The engine is part of the static build (same origin, cached), so it works offline once loaded | None (no CDN) |
+
+Rules for new features:
+
+- A feature that needs a model ships the model or accepts a local file for it.
+- A feature that needs AI degrades gracefully, with a short note and no dead
+  buttons.
+- Downloads are allowlisted and hash-checked.
+- The UI never blocks on network state.
+- The "Works offline" chip in each sibling's top bar is a promise. Keep it true.
+
+## 10. Product direction
 
 - **Now:** a demo-ready web build plus the desktop apps.
 - **Possible future direction:** a free web version with ads, plus a cheap paid desktop download. This is noted only; no layout space is reserved for it.
 
-## 10. Scoped feature list
+## 11. Scoped feature list
 
 Rich enough to demo well, scoped to what fits the current engine.
 
@@ -130,10 +154,11 @@ Rich enough to demo well, scoped to what fits the current engine.
 - Style presets: Karaoke, Subtitle, Boxed, Minimal. Plus words per line and language.
 - Export by burning captions in, or as SRT, VTT or ASS.
 
-## 11. Rollout
+## 12. Rollout
 
-1. ✅ Tokens v2, components, brand marks, identity helper and tests (`packages/ui`, branch `design/v2`).
-2. MediaSmith: switch the top bar, rail, inspector and timeline to `sm-` classes (the v1 `ms-` look stays in place until each screen moves). Add Home, then the Export dialog.
-3. Port `packages/ui` to the siblings. Each sibling copies `tokens.css`, `components.css` and its own mark, and sets `data-app`. The token test ships with it.
-4. Regenerate desktop icons from `brand/<app>.svg` (`tauri icon`), plus favicons and an OG card.
-5. Web demo: a bundled sample project and a final polish pass against the mockups.
+1. ✅ Tokens v2, components, brand marks, identity helper and tests (`packages/ui`).
+2. ✅ MediaSmith: v2 top bar, rail, panels, inspector and timeline; Home; Export dialog; bundled sample project; in-browser MP4 export.
+3. ✅ Siblings: each has `src/smith/` with the v2 tokens (v1 names remapped), `components.css`, its mark, the Inter font and a `Wordmark`, and sets `data-app`. Each also gets a left-aligned top bar with a "Works offline" chip and a rich empty state.
+4. ✅ Desktop icons regenerated from `brand/<app>.svg` (`tauri icon`), and favicons from the same marks.
+5. ✅ Web demos: `apps/smiths-web` (see `docs/web.md`).
+6. Next: an OG card, the remaining feature list above (filters, transitions, audio ducking) and the GifSmith text overlay.

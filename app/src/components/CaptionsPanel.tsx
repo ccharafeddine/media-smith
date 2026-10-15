@@ -4,7 +4,7 @@ import type { Platform } from "@mediasmith/platform";
 import type { Editor } from "../store/store";
 import { captions, fromJson, speakerColor, speakers, toJson } from "../store/model";
 import { missingDiarization, missingModel, type CaptionModel } from "@mediasmith/platform";
-import { Inspector } from "./Inspector";
+import { parseSubtitles, toSrt, toVtt } from "../lib/subtitles";
 
 const PRESETS = ["Fix spelling and punctuation", "Make it punchier and shorter", "Add a few fitting emoji", "Translate to Spanish"];
 
@@ -67,6 +67,37 @@ export function CaptionsPanel(props: { editor: Editor; platform: Platform }) {
     } finally { setProgress(null); }
   }
 
+  /** Offline captions: read an .srt/.vtt the user already has. */
+  function importSubs() {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".srt,.vtt,text/vtt,application/x-subrip";
+    input.onchange = async () => {
+      const f = input.files?.[0];
+      if (!f) return;
+      const cues = parseSubtitles(await f.text());
+      if (!cues.length) return e.setMessage(`No captions found in ${f.name}`);
+      if (list().length && !confirm("Replace the existing captions?")) return;
+      if (e.importCues(cues)) e.setMessage(`Imported ${cues.length} captions from ${f.name}`);
+    };
+    input.click();
+  }
+  function exportSubs(kind: "srt" | "vtt") {
+    const cues = list().map((c) => ({ start_ms: c.start_ms, end_ms: c.start_ms + c.duration_ms, text: c.text }));
+    if (!cues.length) return e.setMessage("No captions to export");
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([kind === "srt" ? toSrt(cues) : toVtt(cues)], { type: "text/plain" }));
+    a.download = `${e.project().name || "captions"}.${kind}`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
+  }
+  async function importModelFile(kind: "whisper" | "speakers") {
+    try {
+      const r = kind === "whisper" ? await cap.importModel() : await cap.importDiarization();
+      if (r) { e.setMessage(`Installed ${r}`); refresh(); refreshDiar(); }
+    } catch (err) { e.setMessage(`Import failed: ${err instanceof Error ? err.message : String(err)}`); }
+  }
+
   async function rewrite() {
     const items = list();
     if (!items.length) return e.setMessage("Add captions first");
@@ -81,8 +112,13 @@ export function CaptionsPanel(props: { editor: Editor; platform: Platform }) {
 
   return (
     <>
-      <div class="sec">Auto-caption</div>
-      <Show when={cap.available} fallback={<p class="dim">Auto-captions need the desktop app.</p>}>
+      <div class="sec">Add captions</div>
+      <div class="row">
+        <button class="btn2" onClick={() => e.addCaption("New caption", e.playhead())}>＋ At playhead</button>
+        <button class="btn2" onClick={importSubs}>⇣ Import .srt / .vtt</button>
+      </div>
+      <div class="sec">Auto-caption · local speech model</div>
+      <Show when={cap.available} fallback={<p class="dim">Auto-captions run in the desktop app with a local whisper model. Here, type captions or import a subtitle file.</p>}>
         <select value={model()} onChange={(ev) => setModel(ev.currentTarget.value)}>
           <For each={models()}>{(m) => <option value={m.file}>{m.label} · {m.size_mb} MB{m.installed ? " ✓" : ""}</option>}</For>
         </select>
@@ -98,7 +134,11 @@ export function CaptionsPanel(props: { editor: Editor; platform: Platform }) {
             <button class="chip" onClick={() => void (p().label.startsWith("Down") ? cap.cancelDownload() : cap.cancel())}>Cancel</button>
           </div>
         )}</Show>
-        <Show when={chosen() && !chosen()!.installed}><p class="dim">The model downloads once and is checked against its SHA-256.</p></Show>
+        <Show when={chosen() && !chosen()!.installed}><p class="dim">Not installed yet. Download it once (SHA-256 checked), or import the file if you already have it.</p></Show>
+        <div class="row">
+          <button class="btn2" title="Install a ggml-*.bin you already have (works offline)" onClick={() => void importModelFile("whisper")}>Import model file…</button>
+          <button class="btn2" title="Install a speaker model file you already have (works offline)" onClick={() => void importModelFile("speakers")}>Import speaker model…</button>
+        </div>
         <label class="row" title={diar().engine ? "" : "The speaker-detection engine isn't bundled in this build"}>
           <input type="checkbox" checked={detectSpeakers()} disabled={!diar().engine} onChange={(ev) => setDetectSpeakers(ev.currentTarget.checked)} />
           Detect speakers{diar().engine ? (diar().models ? "" : " (46 MB download)") : " (engine not bundled)"}
@@ -122,7 +162,11 @@ export function CaptionsPanel(props: { editor: Editor; platform: Platform }) {
           <button class="btn2" onClick={() => e.colorBySpeaker()}>Colour captions by speaker</button>
         </Show>
       </Show>
-      <button class="btn2" onClick={() => e.addCaption("New caption", e.playhead())}>+ Caption at playhead</button>
+      <div class="row">
+        <span class="sec grow">Captions · {list().length}</span>
+        <button class="chip" disabled={!list().length} onClick={() => exportSubs("srt")}>.srt</button>
+        <button class="chip" disabled={!list().length} onClick={() => exportSubs("vtt")}>.vtt</button>
+      </div>
       <div class="cap-list">
         <For each={list()} fallback={<p class="dim">No captions yet.</p>}>{(c) => (
           <div class={`cap-row ${preview()?.[c.id] && preview()![c.id] !== c.text ? "changed" : ""}`} onClick={() => { e.select(c.id); e.seek(c.start_ms); }}>
@@ -137,8 +181,7 @@ export function CaptionsPanel(props: { editor: Editor; platform: Platform }) {
           </div>
         )}</For>
       </div>
-      <Inspector editor={e} />
-      <div class="sec">AI rewrite</div>
+      <div class="sec">AI rewrite · optional</div>
       <select onChange={(ev) => setInstruction(ev.currentTarget.value)}>
         <For each={PRESETS}>{(p) => <option>{p}</option>}</For>
       </select>
@@ -151,7 +194,7 @@ export function CaptionsPanel(props: { editor: Editor; platform: Platform }) {
           <button class="btn2" onClick={() => setPreview(null)}>Discard</button>
         </div>
       </Show>
-      <Show when={!props.platform.ai.available}><p class="dim">AI rewrite needs the desktop app.</p></Show>
+      <p class="dim small">{props.platform.ai.available ? "Uses the provider in Settings. Pick Ollama for a fully local model." : "Optional, desktop only (local Ollama or your own key). Editing never needs it."}</p>
     </>
   );
 }

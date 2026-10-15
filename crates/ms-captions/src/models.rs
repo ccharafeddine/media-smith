@@ -212,6 +212,27 @@ pub fn install_from_reader(
     }
 }
 
+/// Install a model the user already has on disk (offline path). The file must
+/// carry an allowlisted name and match its SHA-256, exactly like a download.
+pub fn import_file(dir: &Path, src: &Path, cancel: &AtomicBool) -> Result<PathBuf, ModelError> {
+    let file = src
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| ModelError::Unknown(src.display().to_string()))?;
+    if !is_allowed(file) {
+        return Err(ModelError::Unknown(file.into()));
+    }
+    let total = std::fs::metadata(src).ok().map(|m| m.len());
+    install_from_reader(
+        std::fs::File::open(src)?,
+        dir,
+        file,
+        total,
+        cancel,
+        |_, _| {},
+    )
+}
+
 /// Download an allowlisted model from the whisper.cpp host into `dir`.
 #[cfg(feature = "download")]
 pub fn download(
@@ -369,5 +390,26 @@ mod tests {
         let cancel = AtomicBool::new(false);
         let p = download(Path::new(&dir), DEFAULT_MODEL, &cancel, |_, _| {}).unwrap();
         assert!(p.metadata().unwrap().len() > 100_000_000);
+    }
+
+    #[test]
+    fn import_rejects_unknown_names_and_bad_hashes() {
+        let d = std::env::temp_dir().join(format!("ms-import-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let stray = d.join("evil.bin");
+        std::fs::write(&stray, b"x").unwrap();
+        let no = AtomicBool::new(false);
+        assert!(matches!(
+            import_file(&d.join("m"), &stray, &no),
+            Err(ModelError::Unknown(_))
+        ));
+        let fake = d.join("ggml-base.en.bin");
+        std::fs::write(&fake, b"not a model").unwrap();
+        assert!(matches!(
+            import_file(&d.join("m"), &fake, &no),
+            Err(ModelError::Checksum { .. })
+        ));
+        assert!(!d.join("m").join("ggml-base.en.bin").exists());
+        let _ = std::fs::remove_dir_all(&d);
     }
 }

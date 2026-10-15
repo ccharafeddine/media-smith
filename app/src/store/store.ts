@@ -96,6 +96,7 @@ export function createEditor(initial: M.Project = M.newProject()) {
       return ok ? id : null;
     },
     setTexts: (texts: Record<string, string>) => apply((p) => M.setTexts(p, texts)),
+    importCues: (cues: { start_ms: number; end_ms: number; text: string }[]) => apply((p) => M.setCaptionsFromCues(p, cues)),
     move: (id: string, start: number, track?: string) => apply((p) => M.moveItem(p, id, start, track)),
     trim: (id: string, start: number, dur: number) => apply((p) => M.trimItem(p, id, start, dur)),
     splitAtPlayhead() {

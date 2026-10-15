@@ -358,6 +358,31 @@ pub fn split_turns(turns: &[Turn], durs: &[u64]) -> Vec<Vec<Turn>> {
     out
 }
 
+/// Install a speaker model from a local file (offline path). Accepts the
+/// segmentation archive (`.tar.bz2`) or the embedding `.onnx`, identified by
+/// SHA-256 rather than by name, so a renamed copy still works and anything
+/// else is refused. Returns which model was installed.
+pub fn import_model(dir: &Path, src: &Path) -> Result<&'static str, String> {
+    let sha = {
+        let mut f = std::fs::File::open(src).map_err(|e| format!("open {}: {e}", src.display()))?;
+        let mut h = Sha256::new();
+        std::io::copy(&mut f, &mut h).map_err(|e| e.to_string())?;
+        crate::models::to_hex(&h.finalize())
+    };
+    std::fs::create_dir_all(dir).map_err(|e| format!("create folder: {e}"))?;
+    let no = AtomicBool::new(false);
+    if sha == EMB_SHA256 {
+        let f = std::fs::File::open(src).map_err(|e| e.to_string())?;
+        install_verified(f, &dir.join(EMB_MODEL), EMB_SHA256, None, &no, |_, _| {})?;
+        Ok("embedding model")
+    } else if sha == SEG_ARCHIVE_SHA256 {
+        extract_seg_model(src, &dir.join(SEG_MODEL))?;
+        Ok("segmentation model")
+    } else {
+        Err("That file isn't one of the speaker-detection models (checked by SHA-256). Use sherpa-onnx-pyannote-segmentation-3-0.tar.bz2 or the 3dspeaker eres2net embedding .onnx.".into())
+    }
+}
+
 /// Download (and verify) whichever of the two models is missing in `dir`.
 /// `progress(step, label, received, total)`; step is 1 or 2.
 #[cfg(feature = "download")]
@@ -406,6 +431,19 @@ pub fn download_models(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn import_model_refuses_unknown_files() {
+        let d = std::env::temp_dir().join(format!("ms-diar-import-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let f = d.join("random.onnx");
+        std::fs::write(&f, b"nope").unwrap();
+        assert!(import_model(&d.join("m"), &f)
+            .unwrap_err()
+            .contains("SHA-256"));
+        assert!(!d.join("m").join(EMB_MODEL).exists());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
     use super::*;
     use crate::whisper::Word;
 

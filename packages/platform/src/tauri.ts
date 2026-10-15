@@ -24,6 +24,7 @@ export const tauriPlatform: Platform = {
     transcribe: "native",
     maxInputBytes: Number.MAX_SAFE_INTEGER,
     exportPresets: ["vertical", "landscape", "square", "portrait", "gif"],
+    exportNote: "Rendered on this computer with native ffmpeg at full size.",
   },
   newProject: (name, width, height, fps) => invoke<string>("new_project", { name, width, height, fps }),
   classifyUrl: (url) => invoke<string>("classify_url", { url }),
@@ -38,6 +39,15 @@ export const tauriPlatform: Platform = {
     }
     return out;
   },
+  async importFile(file) {
+    // Bundled sample or a dropped file: stash a copy on disk so the native
+    // renderer can read it like any imported path.
+    const bytes = Array.from(new Uint8Array(await file.arrayBuffer()));
+    const path = await invoke<string>("stash_media", { name: file.name, bytes });
+    const meta = await invoke<MediaMeta>("probe_file", { path });
+    return { source: path, name: file.name, meta };
+  },
+  sourceName: (source) => source.split(/[\\/]/).pop() ?? source,
   mediaUrl: (source) => (convert ? convert(source) : source),
   async saveProject(json, name) {
     const { save } = await import("@tauri-apps/plugin-dialog");
@@ -111,6 +121,18 @@ export const tauriPlatform: Platform = {
       } finally {
         unlisten();
       }
+    },
+    async importModel() {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const path = await open({ multiple: false, filters: [{ name: "Whisper model", extensions: ["bin"] }] });
+      if (!path || Array.isArray(path)) return null;
+      return invoke<string>("import_caption_model", { path });
+    },
+    async importDiarization() {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const path = await open({ multiple: false, filters: [{ name: "Speaker model", extensions: ["onnx", "bz2"] }] });
+      if (!path || Array.isArray(path)) return null;
+      return invoke<string>("import_diarization_model", { path });
     },
   },
   toGif: async () => {

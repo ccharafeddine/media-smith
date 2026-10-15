@@ -330,6 +330,72 @@ async fn download_diarization_models(app: tauri::AppHandle) -> Result<(), String
     .map_err(|e| e.to_string())?
 }
 
+/// Keep a copy of an in-memory file (the bundled sample, a dropped file) in
+/// the app cache so the native pipeline can read it by path. Only the bare
+/// file name is used, so a crafted name can't escape the folder.
+#[tauri::command]
+fn stash_media(app: tauri::AppHandle, name: String, bytes: Vec<u8>) -> Result<String, String> {
+    let dir = app
+        .path()
+        .app_cache_dir()
+        .map_err(|e| e.to_string())?
+        .join("media");
+    let path = stash_path(&dir, &name)?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    std::fs::write(&path, bytes).map_err(|e| format!("save {}: {e}", path.display()))?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
+fn stash_path(dir: &std::path::Path, name: &str) -> Result<PathBuf, String> {
+    // Last segment of either separator, by hand: Path parsing is platform-specific
+    // (on Windows "a:b" is a drive prefix), and this must behave the same everywhere.
+    let base = name.rsplit(['/', '\\']).next().unwrap_or_default();
+    if base.is_empty() || base == "." || base == ".." {
+        return Err(format!("bad file name: {name}"));
+    }
+    let clean: String = base
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || "._- ".contains(c) {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    Ok(dir.join(clean))
+}
+
+/// Offline path: install a whisper model file the user already has
+/// (allowlisted name + SHA-256, same checks as a download).
+#[tauri::command]
+async fn import_caption_model(app: tauri::AppHandle, path: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let dir = models_dir(&app)?;
+        let no = AtomicBool::new(false);
+        ms_captions::models::import_file(&dir, std::path::Path::new(&path), &no)
+            .map(|p| {
+                p.file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default()
+            })
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Offline path: install a speaker-detection model from a local file.
+#[tauri::command]
+async fn import_diarization_model(app: tauri::AppHandle, path: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let dir = diarization_dir(&app)?;
+        ms_captions::diarize::import_model(&dir, std::path::Path::new(&path)).map(str::to_string)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 fn cancel_auto_caption(state: tauri::State<'_, CaptionState>) {
     state.transcribe_cancel.store(true, Ordering::Relaxed);
@@ -567,8 +633,32 @@ pub fn run() {
             auto_caption,
             cancel_auto_caption,
             diarization_status,
-            download_diarization_models
+            download_diarization_models,
+            import_caption_model,
+            import_diarization_model,
+            stash_media
         ])
         .run(tauri::generate_context!())
         .expect("error while running MediaSmith");
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn stash_path_keeps_only_a_clean_file_name() {
+        let d = std::path::Path::new("cache");
+        assert_eq!(
+            super::stash_path(d, "sample.mp4").unwrap(),
+            d.join("sample.mp4")
+        );
+        assert_eq!(
+            super::stash_path(d, "../../evil.mp4").unwrap(),
+            d.join("evil.mp4")
+        );
+        assert_eq!(
+            super::stash_path(d, "a:b*c.mov").unwrap(),
+            d.join("a_b_c.mov")
+        );
+        assert!(super::stash_path(d, "..").is_err());
+    }
 }

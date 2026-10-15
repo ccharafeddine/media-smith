@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en" data-app="mediasmith">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Browser demos of the Smith video tools. Local files only, nothing is uploaded." />
+    <link rel="icon" type="image/svg+xml" href="./mediasmith.svg" />
+    <title>The Smith suite · web demos</title>
+  </head>
+  <body class="sm-app hub">
+    <main class="hub-main">
+      <h1>The Smith suite</h1>
+      <p class="lede">Small, fast video tools. These demos run entirely in your browser with ffmpeg.wasm: pick a file, nothing is uploaded, no account, no server.</p>
+      <div class="hub-grid">
+        <a class="sm-card hub-card" data-app="clipsmith" href="./clip.html"><img src="./clipsmith.svg" alt="" /><b><span class="wm-app">Clip</span>Smith</b><span>Trim, reframe and export MP4, MP3 or GIF.</span></a>
+        <a class="sm-card hub-card" data-app="gifsmith" href="./gif.html"><img src="./gifsmith.svg" alt="" /><b><span class="wm-app">Gif</span>Smith</b><span>Turn any moment into a loop or boomerang GIF.</span></a>
+        <a class="sm-card hub-card" data-app="captionsmith" href="./caption.html"><img src="./captionsmith.svg" alt="" /><b><span class="wm-app">Caption</span>Smith</b><span>Style captions and burn them into the video.</span></a>
+      </div>
+      <p class="fine">The first export downloads the video engine once (~31 MB, split into two files) and the browser caches it. Desktop apps add native-speed encoding, local AI transcription and full-length exports.</p>
+    </main>
+    <script type="module" src="./src/hub.ts"></script>
+  </body>
+</html>

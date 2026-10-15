@@ -10,7 +10,10 @@
     "./tokens.css": "./src/tokens.css",
     "./fonts.css": "./src/fonts.css",
     "./components.css": "./src/components.css",
-    "./brand/*": "./src/brand/*"
+    "./brand/*": "./src/brand/*",
+    "./sample.mp4": "./assets/sunset-sample.mp4",
+    "./fonts/*": "./src/fonts/*",
+    "./apps": "./src/apps.ts"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",

@@ -3,3 +3,5 @@
 @font-face { font-family: "Syne"; font-weight: 600; font-display: swap; src: url("./fonts/syne-600.woff2") format("woff2"); }
 @font-face { font-family: "Syne"; font-weight: 700; font-display: swap; src: url("./fonts/syne-700.woff2") format("woff2"); }
 @font-face { font-family: "Syne"; font-weight: 800; font-display: swap; src: url("./fonts/syne-800.woff2") format("woff2"); }
+/* Inter (variable, latin), SIL OFL 1.1: UI text. Bundled so the apps look the same offline. */
+@font-face { font-family: "Inter"; font-style: normal; font-weight: 100 900; font-display: swap; src: url("./fonts/inter-latin-wght.woff2") format("woff2"); }

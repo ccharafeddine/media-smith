@@ -1,0 +1,6 @@
+# Cloudflare Pages: cross-origin isolation so SharedArrayBuffer (multi-threaded
+# ffmpeg.wasm) is available. Harmless for the single-threaded core.
+/*
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Embedder-Policy: require-corp
+  Cross-Origin-Resource-Policy: same-origin

@@ -30,16 +30,18 @@ describe("export presets and names", () => {
   it("matches the Rust preset sizes", () => {
     expect(PRESET_SIZES).toEqual({ vertical: [1080, 1920], landscape: [1920, 1080], square: [1080, 1080], portrait: [1080, 1350], gif: [480, 480] });
   });
-  it("desktop exports all presets, web only GIF", () => {
+  it("desktop and web both export every preset", () => {
     expect(getPlatform({ __TAURI_INTERNALS__: {} }).caps.exportPresets).toHaveLength(5);
-    expect(getPlatform({}).caps.exportPresets).toEqual(["gif"]);
+    expect(getPlatform({}).caps.exportPresets).toHaveLength(5);
+    expect(getPlatform({}).caps.exportNote).toMatch(/ffmpeg\.wasm/);
   });
   it("sanitises file names", () => {
     expect(safeName('my: "clip"/v2', "mp4")).toBe("my_ _clip_v2.mp4");
     expect(safeName("  ", "msproj")).toBe("Untitled.msproj");
   });
-  it("web MP4 export explains it needs desktop", async () => {
-    await expect(getPlatform({}).exportProject("{}", "vertical")).rejects.toThrow(/desktop/);
+  it("web MP4 export asks for a clip when the project is empty", async () => {
+    const empty = JSON.stringify({ name: "x", canvas: { width: 1080, height: 1920 }, tracks: [{ kind: "video", items: [] }] });
+    await expect(getPlatform({}).exportProject(empty, "vertical")).rejects.toThrow(/clip/);
   });
 });
 

@@ -458,3 +458,14 @@ export function applyTemplate(p: Project, id: string, at_ms = 0): Project {
   }
   return q;
 }
+
+/** Replace the caption track with imported cues (SRT/VTT): the offline way to
+ *  get captions without a speech model. Keeps the current caption style. */
+export function setCaptionsFromCues(p: Project, cues: { start_ms: number; end_ms: number; text: string }[]): Project {
+  const r = ensureTrack(p, "caption", "Captions");
+  return transact(r.project, (q) => {
+    const t = q.tracks.find((x) => x.id === r.id)!;
+    const style = (t.items.find((i) => i.type === "caption") as (Item & { type: "caption" }) | undefined)?.style ?? defaultStyle();
+    t.items = cues.map((c) => ({ id: freshId(q, "i"), start_ms: Math.round(c.start_ms), duration_ms: Math.round(c.end_ms - c.start_ms), type: "caption" as const, text: c.text, style: { ...style } }));
+  });
+}

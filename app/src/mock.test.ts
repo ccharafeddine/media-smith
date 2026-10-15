@@ -4,7 +4,7 @@ import { AI_PROVIDERS, PRESETS, TOOLS } from "./mock";
 
 describe("catalogues", () => {
   it("has the tools in sidebar order", () => {
-    expect(TOOLS).toEqual(["Edit", "Clip", "GIF", "Captions", "Design", "Import", "Settings"]);
+    expect(TOOLS).toEqual(["Home", "Media", "Text", "Captions", "Design", "Settings"]);
   });
   it("preset sizes agree with the platform package", () => {
     for (const p of PRESETS) expect([p.w, p.h]).toEqual(PRESET_SIZES[p.id]);

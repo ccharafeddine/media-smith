@@ -8,9 +8,8 @@ import type { Item } from "../store/model";
 
 const HEAD = 112;
 
-function label(it: Item): string {
-  if (it.type === "clip") return it.source.split(/[\\/]/).pop() ?? it.source;
-  return it.text;
+function label(it: Item, platform: Platform): string {
+  return it.type === "clip" ? platform.sourceName(it.source) : it.text;
 }
 
 /** Real timeline: click to seek, drag a block to move, drag its edges to
@@ -108,7 +107,7 @@ export function Timeline(props: { editor: Editor; pxPerSec: number; platform: Pl
                 <i class="grip l" onPointerDown={(ev) => drag(ev, it, "left")} />
                 <Show when={it.fade?.in_ms}><i class="fade-in" style={{ width: `${timeToX(it.fade!.in_ms, props.pxPerSec)}px` }} /></Show>
                 <Show when={it.fade?.out_ms}><i class="fade-out" style={{ width: `${timeToX(it.fade!.out_ms, props.pxPerSec)}px` }} /></Show>
-                <span>{label(it)}</span>
+                <span>{label(it, props.platform)}</span>
                 <i class="grip r" onPointerDown={(ev) => drag(ev, it, "right")} />
               </div>
             )}</For>

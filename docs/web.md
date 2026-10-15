@@ -1,58 +1,87 @@
-# MediaSmith on the web: feasibility
+# The Smith suite on the web
 
 The UI talks to `@mediasmith/platform`, never to Tauri directly. `getPlatform()`
 returns the Tauri backend inside the desktop webview (`__TAURI_INTERNALS__`) and
-the web backend in a normal tab. The web backend uses **ffmpeg.wasm**
-(`@ffmpeg/ffmpeg`) entirely client-side: no server, no uploads.
+the web backend in a normal tab. The web backend runs **ffmpeg.wasm**
+(`@ffmpeg/core` 0.12.10, single-threaded, with libx264, libmp3lame, libvpx,
+libass and the palette filters) entirely client-side: local files only, no
+server, no uploads, no account.
 
-## 1. GifSmith web demo (`apps/web-demo`)
+## 1. Static builds
 
-- **Flow:** local file in (picker or drag and drop) → ffmpeg.wasm palette GIF
-  (`palettegen`/`paletteuse`, same filter the desktop uses) → GIF out as a Blob
-  download. Built with `npm run build -w @mediasmith/web-demo` to static files in
-  `apps/web-demo/dist`, deployable to Cloudflare Pages as is.
-- **Size limits:** wasm memory tops out around 2 GB, and the input, the decoded
-  frames and the output all live in it. The demo caps input at 500 MB and GIF
-  length at 15 s. Long or 4K sources should be trimmed first.
-- **Speed:** the single-threaded core is roughly 5 to 20 times slower than native
-  ffmpeg. Expect about 5 to 30 s for a 4 s 480p GIF on a modern laptop, plus a
-  one-time ~30 MB core download (cached). The multi-threaded core (`@ffmpeg/core-mt`)
-  gives about 2 to 3 times that speed but needs SharedArrayBuffer.
-- **Headers (Cloudflare Pages):** SharedArrayBuffer requires cross-origin
-  isolation. `apps/web-demo/public/_headers` ships:
-  ```
-  /*
-    Cross-Origin-Opener-Policy: same-origin
-    Cross-Origin-Embedder-Policy: require-corp
-    Cross-Origin-Resource-Policy: same-origin
-  ```
-  With COEP on, every subresource must be same-origin or send CORP/CORS headers,
-  so the ffmpeg core is bundled from `node_modules`, not loaded from a CDN. If the
-  demo is embedded in another page (an iframe on a portfolio), that parent page
-  needs the same headers too.
-- **Cloudflare Pages file-size limit:** Pages rejects any single asset over 25 MiB,
-  and the ffmpeg.wasm core is about 31 MiB (32.2 MB in the build output). To deploy,
-  either serve `ffmpeg-core.wasm` from an R2 bucket on the *same* custom domain
-  (a route like `/wasm/*`, sent with `Cross-Origin-Resource-Policy: same-origin`), or
-  build a slimmer custom ffmpeg.wasm with only the GIF filters and decoders.
-  The current build works with `vite preview` and any host without that limit.
-- **URL import can't work in a browser.** Fetching another site's page or video
-  is blocked by CORS, and yt-dlp is a Python program that can't run in a tab. Making
-  it work would need a server-side proxy, which goes against "no server" and
-  carries abuse and legal risk. Link import stays desktop only, and the web UI says so.
+Both builds are plain static folders. Nothing in this repo deploys them; hosting
+is a separate, manual step.
 
-## 2. Feature split
+| Build | Command | Output | Size | Largest file |
+|---|---|---|---|---|
+| MediaSmith editor | `npm run build -w @mediasmith/app` | `app/dist/` | ~33 MB | 20 MiB (`ffmpeg/ffmpeg-core.wasm.part0`) |
+| ClipSmith, GifSmith, CaptionSmith demos + hub | `npm run build -w @mediasmith/smiths-web` | `apps/smiths-web/dist/` | ~33 MB | 20 MiB (same) |
 
-| Feature | Desktop | Web |
+`apps/smiths-web/dist` holds `index.html` (a hub page linking the three demos),
+`clip.html`, `gif.html` and `caption.html`. They share one copy of the engine.
+Both builds use relative paths (`base: "./"`), so they work from any sub-folder.
+
+Preview locally with `npx vite preview` in `app/` or `apps/smiths-web/`. It sends the
+isolation headers below. Opening `index.html` from `file://` does not work,
+because the engine has to be fetched.
+
+## 2. The 25 MiB Cloudflare Pages limit
+
+Pages rejects any single file over 25 MiB, and the ffmpeg.wasm core is 32,232,419
+bytes (about 30.7 MiB). The `ffmpegCore()` Vite plugin
+(`packages/platform/vite-ffmpeg.mjs`) handles this at build time. It:
+
+- writes `ffmpeg/ffmpeg-core.js` (110 KB);
+- splits the wasm into `ffmpeg-core.wasm.part0` (20 MiB) and `.part1` (10.7 MiB);
+- adds `fonts/Inter.ttf` and `fonts/Syne.ttf`, used for caption and text burn-in;
+- writes a `manifest.json` that lists the parts.
+
+At runtime, `loadFfmpeg()` fetches the parts, joins them into one Blob URL and
+loads the core from it. Every file is served from the same origin, so no CDN, R2
+bucket or alternate host is needed, and the build works under COEP.
+
+The desktop build skips the plugin (`TAURI_ENV_PLATFORM` is set during
+`tauri build`), so the installers don't carry the wasm.
+
+## 3. Headers
+
+`public/_headers` (Cloudflare Pages format) is copied into both builds:
+
+```
+/*
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Embedder-Policy: require-corp
+  Cross-Origin-Resource-Policy: same-origin
+```
+
+The single-threaded core doesn't need SharedArrayBuffer, so these headers aren't
+strictly required. They are kept so the multi-threaded core can be a drop-in
+later. If a demo is embedded in another page through an iframe, that parent page
+needs compatible headers.
+
+## 4. What works in the browser and what is desktop only
+
+Measured in headless Chromium on the bundled 8 s 720x1280 sample. The first export
+also downloads the engine once (about 31 MB, cached after that).
+
+| App | Works in the browser | Desktop only |
 |---|---|---|
-| Open local video, trim, split, timeline | ✅ | ✅ (memory-limited) |
-| GIF export | ✅ native ffmpeg | ✅ ffmpeg.wasm |
-| MP4 export with presets | ✅ hardware encoders | ⚠️ libx264 in wasm, slow; short clips only |
-| Captions styling / burn-in | ✅ | ✅ (canvas preview, wasm burn-in) |
-| Auto-captions (whisper) | ✅ whisper.cpp sidecar, GPU | ⚠️ possible via transformers.js / whisper.wasm, but 40 to 250 MB models and slow on CPU; WebGPU helps |
-| Auto-reframe (face/person) | ✅ tract ONNX | ⚠️ possible with onnxruntime-web; heavy |
-| Link import (yt-dlp + scraper) | ✅ | ❌ CORS, no subprocesses |
-| Hardware encode, large/4K files | ✅ | ❌ |
-| Design canvas, templates | ✅ | ✅ |
+| **MediaSmith** | Home, templates, bundled sample project, timeline editing, text, captions (manual, SRT/VTT import and export), design templates, save/open project files, export of all 5 presets (9:16, 4:5, 16:9, 1:1 MP4 up to 960p, and GIF) with text and karaoke captions burned in via libass. The sample renders in about 10 s. | Native/hardware encoding at full resolution, Whisper auto-captions, speaker labels, AI rewrite (Ollama), link import, filmstrips |
+| **ClipSmith** (`clip.html`) | Open or drop a local file, trim (typed or from the playhead), reframe (original, 9:16, 1:1, 16:9 centre crop), export MP4 (H.264 + AAC, up to 720p), MP3 or GIF. 8 s clip in about 7 s. | Link import (yt-dlp), any length or resolution, native-speed encoding |
+| **GifSmith** (`gif.html`) | Open or drop a file, pick start and length (up to 15 s), crop, width, fps, loop or boomerang, palette GIF. 3 s boomerang in about 2 s. | Frame-accurate trim handles, size-target shrink, gallery, longer GIFs, link import |
+| **CaptionSmith** (`caption.html`) | Import .srt/.vtt or type captions, edit and jump, style (font, size, colour, box/outline, position) with a live preview that matches the burn, export SRT, VTT or an MP4 with captions burned in (libass). 8 s clip in about 5 s. | Whisper transcription (local model), speaker labels, batch mode, link import |
 
-Nothing in this repo deploys anywhere. Hosting the demo is a separate, manual step.
+Limits that apply to every web build:
+
+- Input is capped at 500 MB, because wasm memory tops out around 2 GB and holds the input, the frames and the output.
+- Output is capped at 720p (960p in MediaSmith).
+- The single-threaded core is roughly 5 to 20 times slower than native ffmpeg.
+
+## 5. Why some features stay on the desktop
+
+- **Link import:** fetching another site's video is blocked by CORS, and yt-dlp
+  can't run in a tab. Making it work would need a proxy server. Link import is
+  optional everywhere and is labelled "optional, needs internet".
+- **Whisper in the browser** is possible (whisper.wasm or transformers.js), but
+  the 40 to 250 MB models and CPU-only speed make it a poor demo. The web demos
+  ask for an SRT/VTT import or typed captions instead.

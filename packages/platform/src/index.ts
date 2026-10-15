@@ -3,7 +3,10 @@ import { webPlatform } from "./web";
 import type { Platform } from "./types";
 
 export * from "./types";
-export { loadFfmpeg, webPlatform } from "./web";
+export { registerFile, webPlatform } from "./web";
+export { configureFfmpeg, loadFfmpeg, partUrls, type CoreManifest } from "./ffmpegLoader";
+export { assColor, assEscape, assTime, buildAss, hasOverlays, karaokeText } from "./ass";
+export { clipArgs, planRender, renderMp4, silentClipArgs, webSize, WEB_MAX_H } from "./webRender";
 
 /** True inside the Tauri webview (Tauri 2 injects __TAURI_INTERNALS__). */
 export function isTauri(w: unknown = globalThis): boolean {

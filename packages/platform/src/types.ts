@@ -7,6 +7,8 @@ export interface Capabilities {
   hardwareEncode: boolean;
   transcribe: "native" | "wasm" | "none";
   maxInputBytes: number; // wasm heap is ~2 GB; keep demos well under
+  /** Short note on how this platform renders (shown in the export dialog). */
+  exportNote: string;
   /** Export presets this platform can render. */
   exportPresets: ExportPreset[];
 }
@@ -50,6 +52,10 @@ export interface Platform {
   classifyUrl(url: string): Promise<string>;
   /** Let the user pick media files and probe them. Empty array = cancelled. */
   importMedia(): Promise<MediaRef[]>;
+  /** Adopt an in-memory file (drag and drop, bundled sample) as a source. */
+  importFile(file: File): Promise<MediaRef>;
+  /** Human file name for a stored source (web handles hide the real name). */
+  sourceName(source: string): string;
   /** A URL the <video> element can play for a stored source. */
   mediaUrl(source: string): string;
   /** Save project JSON. Returns where it went, or null if cancelled. */
@@ -124,6 +130,11 @@ export interface CaptionsApi {
   diarizationStatus(): Promise<{ models: boolean; engine: boolean }>;
   /** Download + verify the two speaker-detection models (~46 MB). */
   downloadDiarization(onProgress?: (ratio: number | null, label: string) => void): Promise<void>;
+  /** Offline path: pick a whisper model file already on disk (same name +
+   *  SHA-256 checks as a download). Returns the installed file, or null. */
+  importModel(): Promise<string | null>;
+  /** Offline path: pick a speaker-detection model file. Returns what was installed. */
+  importDiarization(): Promise<string | null>;
 }
 
 /** "DIARIZE_MODELS_MISSING|<dir>" means the speaker models need downloading. */

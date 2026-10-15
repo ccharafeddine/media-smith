@@ -1,21 +1,8 @@
-import type { FFmpeg } from "@ffmpeg/ffmpeg";
-import { gifArgs, safeName, type MediaRef, type Platform } from "./types";
+import { gifArgs, PRESET_SIZES, safeName, type MediaRef, type Platform } from "./types";
+import { loadFfmpeg } from "./ffmpegLoader";
+import { planRender, renderMp4, webSize } from "./webRender";
 
-let ffmpeg: Promise<FFmpeg> | null = null;
-
-const AI_WEB = "AI features run in the desktop app for now (keys stay in the OS keychain). See docs/ai.md for the web plan.";
-
-/** Lazily load ffmpeg.wasm (single-threaded core from the same origin, so it
- *  works without COOP/COEP; the multi-threaded core needs those headers). */
-export function loadFfmpeg(coreURL?: string, wasmURL?: string): Promise<FFmpeg> {
-  ffmpeg ??= (async () => {
-    const { FFmpeg } = await import("@ffmpeg/ffmpeg");
-    const f = new FFmpeg();
-    await f.load(coreURL && wasmURL ? { coreURL, wasmURL } : undefined);
-    return f;
-  })();
-  return ffmpeg;
-}
+const AI_WEB = "AI rewrite is optional and runs in the desktop app (local Ollama or your own key). Everything else works without it.";
 
 /** Imported Files live only for this tab; projects reference them as web:<n>. */
 const files = new Map<string, { file: File; url: string }>();
@@ -64,25 +51,33 @@ function emptyProject(name: string, width: number, height: number, fps: number):
   return JSON.stringify({ version: 1, name, canvas: { width, height, fps }, tracks, next_id: 3 }, null, 2);
 }
 
-const CAP_WEB = "Auto-captions need the desktop app for now (in-browser whisper is planned).";
+const CAP_WEB = "Auto-captions run in the desktop app with a local whisper model. In the browser, add captions by hand or import an .srt/.vtt file.";
+
+async function adopt(file: File): Promise<MediaRef> {
+  if (file.size > webPlatform.caps.maxInputBytes) throw new Error(`${file.name} is over 500 MB`);
+  const source = registerFile(file);
+  const m = await probeInBrowser(files.get(source)!.url);
+  return { source, name: file.name, meta: { ...m, has_audio: true } };
+}
 
 export const webPlatform: Platform = {
   kind: "web",
-  caps: { urlImport: false, hardwareEncode: false, transcribe: "wasm", maxInputBytes: 500 * 1024 * 1024, exportPresets: ["gif"] },
+  caps: {
+    urlImport: false, hardwareEncode: false, transcribe: "none", maxInputBytes: 500 * 1024 * 1024,
+    exportPresets: ["vertical", "landscape", "square", "portrait", "gif"],
+    exportNote: "Rendered in this tab with ffmpeg.wasm at up to 960p. Nothing is uploaded.",
+  },
   newProject: async (name, w, h, fps) => emptyProject(name, w, h, fps),
   classifyUrl: async () => {
     throw new Error("Link import needs the desktop app (browsers block cross-site video fetches).");
   },
   async importMedia() {
     const out: MediaRef[] = [];
-    for (const file of await pickFiles("video/*", true)) {
-      if (file.size > webPlatform.caps.maxInputBytes) throw new Error(`${file.name} is over 500 MB`);
-      const source = registerFile(file);
-      const m = await probeInBrowser(files.get(source)!.url);
-      out.push({ source, name: file.name, meta: { ...m, has_audio: true } });
-    }
+    for (const file of await pickFiles("video/*", true)) out.push(await adopt(file));
     return out;
   },
+  importFile: (file) => adopt(file),
+  sourceName: (source) => files.get(source)?.file.name ?? source,
   mediaUrl: (source) => files.get(source)?.url ?? "",
   async saveProject(json, name) {
     const fname = safeName(name, "msproj");
@@ -94,16 +89,24 @@ export const webPlatform: Platform = {
     return f ? f.text() : null;
   },
   async exportProject(json, preset, onProgress) {
-    if (preset !== "gif") throw new Error("MP4 export needs the desktop app; the web build exports GIF.");
-    const p = JSON.parse(json) as { name: string; tracks: { kind: string; items: { type: string; source: string; source_in_ms: number; duration_ms: number }[] }[] };
-    const clip = p.tracks.find((t) => t.kind === "video")?.items.find((i) => i.type === "clip");
-    const entry = clip && files.get(clip.source);
-    if (!clip || !entry) throw new Error("Import a clip first (web projects can't reopen files from a past session).");
-    const blob = (await webPlatform.toGif(entry.file, {
-      startSec: clip.source_in_ms / 1000, durationSec: Math.min(15, clip.duration_ms / 1000), width: 480, fps: 15,
-    }, onProgress)) as Blob;
-    const name = safeName(`${p.name}-gif`, "gif");
-    download(blob, name);
+    const p = JSON.parse(json) as { name: string; canvas: { width: number; height: number }; tracks: { kind: string; items: { type: string; source: string; source_in_ms: number; duration_ms: number }[] }[] };
+    if (preset === "gif") {
+      const clip = p.tracks.find((t) => t.kind === "video")?.items.find((i) => i.type === "clip");
+      const entry = clip && files.get(clip.source);
+      if (!clip || !entry) throw new Error("Import a clip first (web projects can't reopen files from a past session).");
+      const blob = (await webPlatform.toGif(entry.file, {
+        startSec: clip.source_in_ms / 1000, durationSec: Math.min(15, clip.duration_ms / 1000), width: 480, fps: 15,
+      }, onProgress)) as Blob;
+      const name = safeName(`${p.name}-gif`, "gif");
+      download(blob, name);
+      return name;
+    }
+    const [w, h] = webSize(...PRESET_SIZES[preset]);
+    const plan = planRender(p, w, h);
+    const f = await loadFfmpeg();
+    const data = await renderMp4(f, plan, (s) => files.get(s)?.file, onProgress);
+    const name = safeName(`${p.name}-${preset}`, "mp4");
+    download(new Blob([data.slice()], { type: "video/mp4" }), name);
     return name;
   },
   cancelExport: async () => undefined,
@@ -126,6 +129,8 @@ export const webPlatform: Platform = {
     cancel: async () => undefined,
     diarizationStatus: async () => ({ models: false, engine: false }),
     downloadDiarization: async () => { throw new Error(CAP_WEB); },
+    importModel: async () => { throw new Error(CAP_WEB); },
+    importDiarization: async () => { throw new Error(CAP_WEB); },
   },
   toGif: async (input, opts, onProgress) => {
     if (typeof input === "string") throw new Error("The web build takes a local File, not a path.");

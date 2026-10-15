@@ -21,7 +21,7 @@ packages/
   ui/           shared Smith design tokens (Syne, near-black, violet + cyan) and components
   platform/     platform adapter: Tauri invoke on desktop, ffmpeg.wasm in a browser
 apps/
-  web-demo/     GifSmith-style in-browser video-to-GIF demo (ffmpeg.wasm, static)
+  smiths-web/   static browser demos of ClipSmith, GifSmith, CaptionSmith (ffmpeg.wasm)
 docs/           design mockups, web feasibility notes
 scripts/        sidecar fetchers (ffmpeg, yt-dlp); binaries are gitignored
 ```

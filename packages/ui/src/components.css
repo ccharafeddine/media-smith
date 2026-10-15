@@ -5,7 +5,7 @@
 .sm-topbar { height: var(--topbar-h); display: flex; align-items: center; gap: var(--sp-3); padding: 0 var(--sp-4); background: var(--surface-1); border-bottom: 1px solid var(--line-1); }
 .sm-wordmark { display: inline-flex; align-items: center; gap: var(--sp-2); font: 700 var(--t-xl)/1 var(--font-brand); letter-spacing: -0.01em; }
 .sm-wordmark img { width: 26px; height: 26px; }
-.sm-wordmark .app { color: var(--app-hue); } .sm-wordmark .smith { color: var(--text-1); }
+.sm-wordmark .wm-app { color: var(--app-hue); } .sm-wordmark .wm-smith { color: var(--text-1); }
 
 .sm-btn { display: inline-flex; align-items: center; justify-content: center; gap: var(--sp-2); height: 32px; padding: 0 var(--sp-3);
   font: var(--w-med) var(--t-md)/1 var(--font-text); color: var(--text-1); background: var(--surface-2); border: 1px solid var(--line-2);
