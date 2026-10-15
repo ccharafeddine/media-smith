@@ -9,6 +9,8 @@ server, no uploads, no account.
 
 ## 1. Static builds
 
+For standalone per-subdomain builds (media, clip, gif and caption .chafic.me), see [`hosting.md`](hosting.md).
+
 Both builds are plain static folders. Nothing in this repo deploys them; hosting
 is a separate, manual step.
 

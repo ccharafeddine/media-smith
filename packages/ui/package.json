@@ -13,7 +13,12 @@
     "./brand/*": "./src/brand/*",
     "./sample.mp4": "./assets/sunset-sample.mp4",
     "./fonts/*": "./src/fonts/*",
-    "./apps": "./src/apps.ts"
+    "./apps": "./src/apps.ts",
+    "./sites": {
+      "types": "./src/sites.d.mts",
+      "default": "./src/sites.mjs"
+    },
+    "./og/*": "./og/*"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",

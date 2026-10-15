@@ -7,6 +7,8 @@ import { configureFfmpeg, loadFfmpeg } from "@mediasmith/platform";
 import type { FFmpeg } from "@ffmpeg/ffmpeg";
 import sampleUrl from "@mediasmith/ui/sample.mp4";
 
+const REPOS: Partial<Record<SmithApp, string>> = { clipsmith: "ClipSmith", gifsmith: "GifSmith", captionsmith: "CaptionSmith" };
+
 export const MAX_INPUT = 500 * 1024 * 1024;
 export const $ = <T extends HTMLElement = HTMLElement>(sel: string, root: ParentNode = document) => root.querySelector(sel) as T;
 
@@ -18,11 +20,12 @@ export function shell(app: SmithApp, desktopOnly: string[]): void {
   const bar = document.createElement("header");
   bar.className = "sm-topbar";
   bar.innerHTML = `
-    <a class="sm-wordmark" href="./index.html" aria-label="${info.prefix}Smith">
-      <img src="./${app}.svg" alt="" width="26" height="26" /><span><span class="wm-app">${info.prefix}</span><span class="wm-smith">Smith</span></span>
+    <a class="sm-wordmark" href="${import.meta.env.BASE_URL}${import.meta.env.BASE_URL === "/" ? "" : "index.html"}" aria-label="${info.prefix}Smith">
+      <img src="${import.meta.env.BASE_URL}${app}.svg" alt="" width="26" height="26" /><span><span class="wm-app">${info.prefix}</span><span class="wm-smith">Smith</span></span>
     </a>
     <span class="vsep"></span><span class="tag">Web demo</span>
     <span class="grow"></span>
+    ${REPOS[app] ? `<a class="sm-btn sm-btn--sm sm-btn--ghost" href="https://github.com/ccharafeddine/${REPOS[app]}/releases/latest" target="_blank" rel="noopener">Get the desktop app</a>` : ""}
     <span class="sm-chip" title="Files are processed in this tab with ffmpeg.wasm. Nothing is uploaded."><i class="dot"></i> Runs in your browser</span>`;
   document.body.prepend(bar);
   const foot = document.createElement("footer");

@@ -7,3 +7,7 @@ app/src-tauri/binaries/
 *.log
 .DS_Store
 .whisper-build/
+dist-site/
+
+# Committed, ready-to-host web build (see docs/hosting.md)
+!web/dist/

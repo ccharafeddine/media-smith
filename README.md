@@ -50,6 +50,11 @@ The rules are in [`docs/design-system.md`](docs/design-system.md#9-offline-first
 
 ## Web demos
 
+The editor's web demo is meant for **media.chafic.me**, with the sibling demos at clip, gif and
+caption .chafic.me. A ready-to-host build of this one is committed in [`web/dist/`](web/dist)
+(rebuild with `SMITH_SITE=media npm run build -w @mediasmith/app`). Hosting notes, the headers
+it needs and listing assets are in [`docs/hosting.md`](docs/hosting.md).
+
 Both builds are static. They use ffmpeg.wasm with local files only: no server and no uploads.
 
 | Build | Command | Output |
