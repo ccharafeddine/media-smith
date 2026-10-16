@@ -12,7 +12,12 @@ use smith_fetch::{DownloadOptions, Fetcher, Hooks, Tools};
 #[tokio::main]
 async fn main() {
     let a: Vec<String> = std::env::args().collect();
-    let (ytdlp, ffmpeg, work, url) = (PathBuf::from(&a[1]), PathBuf::from(&a[2]), PathBuf::from(&a[3]), a[4].clone());
+    let (ytdlp, ffmpeg, work, url) = (
+        PathBuf::from(&a[1]),
+        PathBuf::from(&a[2]),
+        PathBuf::from(&a[3]),
+        a[4].clone(),
+    );
     let flag = |f: &str| a.iter().any(|x| x == f);
     let updater = Arc::new(Updater::new(work.join("bin"), ytdlp));
     if flag("--update") {
@@ -31,11 +36,24 @@ async fn main() {
         }),
         status: Arc::new(|s| println!("status: {s}")),
     };
-    let f = Fetcher::new("SmithTest", Tools { ffmpeg, updater }, Store::new(work.join("cookies")), hooks);
-    let o = DownloadOptions { playlist: flag("--playlist"), ..Default::default() };
+    let f = Fetcher::new(
+        "SmithTest",
+        Tools { ffmpeg, updater },
+        Store::new(work.join("cookies")),
+        hooks,
+    );
+    let o = DownloadOptions {
+        playlist: flag("--playlist"),
+        ..Default::default()
+    };
     if flag("--probe") {
         match f.probe(&url, &o).await {
-            Ok(i) => println!("probe: {} live={} formats={:?}", i.title, i.is_live, i.formats.iter().map(|c| &c.label).collect::<Vec<_>>()),
+            Ok(i) => println!(
+                "probe: {} live={} formats={:?}",
+                i.title,
+                i.is_live,
+                i.formats.iter().map(|c| &c.label).collect::<Vec<_>>()
+            ),
             Err(e) => println!("probe error: {e}"),
         }
         return;
@@ -44,7 +62,12 @@ async fn main() {
     match f.download(&url, &o, &work.join("dl")).await {
         Ok(files) => {
             for p in files {
-                println!("OK {} ({} bytes) in {:.1}s", p.display(), std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0), t.elapsed().as_secs_f64());
+                println!(
+                    "OK {} ({} bytes) in {:.1}s",
+                    p.display(),
+                    std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0),
+                    t.elapsed().as_secs_f64()
+                );
             }
         }
         Err(e) => println!("ERR {e}"),
