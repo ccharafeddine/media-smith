@@ -331,6 +331,21 @@ impl Fetcher {
             return self.direct(url, &ext, &ctx, dir).await.map(|p| vec![p]);
         }
         if let Some(m) = util::direct_manifest_extension(url) {
+            if m != "m3u8" {
+                // DASH: check for DRM, then let yt-dlp pick and merge the
+                // best video + audio representations (ffmpeg's demuxer
+                // chokes on many real-world MPDs).
+                if let Ok(text) = http::fetch_text(url, &ctx, MAX_HTML_BYTES, &self.cancel).await {
+                    if crate::sniff::manifest_drm(&text) {
+                        return Err(stream::DRM_MESSAGE.to_string());
+                    }
+                }
+                return match self.ytdlp_with_retries(url, o, dir, None).await {
+                    Ok(files) => Ok(self.finish_live(o, files).await),
+                    Err(RunError::Cancelled) => Err(cancelled_err()),
+                    Err(RunError::Failed(e)) => Err(ytdlp::friendly_error(&e, &self.app_name)),
+                };
+            }
             return self
                 .stream(url, m == "m3u8", &ctx, dir)
                 .await
