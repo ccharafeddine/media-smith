@@ -799,6 +799,33 @@ mod tests {
     }
 
     #[test]
+    fn leading_and_middle_gaps_keep_timeline_length() {
+        let (mut p, s) = project();
+        let v = p.tracks[0].id.clone();
+        let a = p.tracks[0].items[0].id.clone();
+        let b = p.tracks[0].items[1].id.clone();
+        // a: 900..2900 (leading gap 0.9 s), b: 4000..5000 (middle gap 1.1 s)
+        p.move_item(&b, 4000, Some(&v)).unwrap();
+        p.move_item(&a, 900, Some(&v)).unwrap();
+        let args = export_args(
+            &p,
+            Preset::Vertical,
+            &s,
+            VideoEncoder::X264,
+            QualityTier::High,
+            &ExportOptions::default(),
+            "o.mp4",
+        )
+        .unwrap();
+        let g = graph(&args);
+        assert!(g.starts_with("color=c=black:s=1080x1920:r=30:d=0.900"), "{g}");
+        assert!(g.contains("anullsrc=r=48000:cl=stereo,atrim=duration=0.900[a0]"), "{g}");
+        assert!(g.contains("color=c=black:s=1080x1920:r=30:d=1.100"), "{g}");
+        assert!(g.contains("concat=n=4:v=1:a=1"), "{g}");
+        assert_eq!(export_duration_ms(&p), 5000);
+    }
+
+    #[test]
     fn muted_audio_tracks_are_skipped() {
         let (mut p, mut s) = project();
         let au = p.add_track(TrackKind::Audio, "Music");

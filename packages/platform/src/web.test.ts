@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { assColor, assTime, buildAss, karaokeText } from "./ass";
-import { clipArgs, planRender, silentClipArgs, webSize } from "./webRender";
+import { clipArgs, gapArgs, planRender, silentClipArgs, webSize } from "./webRender";
 import { partUrls } from "./ffmpegLoader";
 
 const style = { font: "Syne", size_px: 84, color: "#ffd400", stroke: "#000000", x: 0.5, y: 0.75 };
@@ -50,6 +50,29 @@ describe("web render plan", () => {
     expect(plan.ass).toContain("Dialogue");
     expect(planRender({ ...project, tracks: [project.tracks[0]] }, 540, 960).ass).toBeNull();
     expect(() => planRender({ ...project, tracks: [] }, 540, 960)).toThrow(/clip/);
+  });
+  it("keeps a leading gap as black + silence (regression: 8.1 s exported as 7.2 s)", () => {
+    const v = { kind: "video", items: [{ type: "clip", source: "web:1", start_ms: 900, duration_ms: 7200, source_in_ms: 0 }] };
+    const plan = planRender({ ...project, tracks: [v] }, 540, 960);
+    expect(plan.segments.map((s) => s.kind)).toEqual(["gap", "clip"]);
+    expect(plan.segments[0]).toEqual({ kind: "gap", duration_ms: 900 });
+    expect(plan.totalMs).toBe(8100);
+  });
+  it("keeps a middle gap between clips", () => {
+    const v = { kind: "video", items: [
+      { type: "clip", source: "web:2", start_ms: 5000, duration_ms: 2000, source_in_ms: 0 },
+      { type: "clip", source: "web:1", start_ms: 0, duration_ms: 4000, source_in_ms: 0 },
+    ] };
+    const plan = planRender({ ...project, tracks: [v] }, 540, 960);
+    expect(plan.segments.map((s) => (s.kind === "gap" ? `gap:${s.duration_ms}` : s.clip.source))).toEqual(["web:1", "gap:1000", "web:2"]);
+    expect(plan.totalMs).toBe(7000);
+  });
+  it("renders gaps with black video and silent audio at the segment format", () => {
+    const a = gapArgs(900, "seg0.mp4", 540, 960).join(" ");
+    expect(a).toContain("-t 0.9 -i color=c=black:s=540x960:r=30");
+    expect(a).toContain("anullsrc=r=44100:cl=stereo");
+    expect(a).toContain("format=yuv420p");
+    expect(a).toContain("-c:a aac");
   });
   it("builds trim, scale, pad and fade arguments", () => {
     const a = clipArgs(project.tracks[0].items[1] as never, "in.mp4", "seg0.mp4", 540, 960).join(" ");

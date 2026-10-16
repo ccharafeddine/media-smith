@@ -5,8 +5,10 @@ import { buildAss, hasOverlays } from "./ass";
  *  the canvas, faded and concatenated, then text + captions are burned in
  *  with libass. Same layout rules as the desktop renderer, but encoded at a
  *  lighter size because wasm runs on one CPU thread. */
-export interface RenderClip { source: string; source_in_ms: number; duration_ms: number; volume?: number; fade?: { in_ms: number; out_ms: number } | null }
-export interface RenderPlan { w: number; h: number; clips: RenderClip[]; ass: string | null; totalMs: number }
+export interface RenderClip { source: string; start_ms?: number; source_in_ms: number; duration_ms: number; volume?: number; fade?: { in_ms: number; out_ms: number } | null }
+/** One concat segment: a clip, or a stretch of empty timeline (black + silence). */
+export type RenderSeg = { kind: "clip"; clip: RenderClip } | { kind: "gap"; duration_ms: number };
+export interface RenderPlan { w: number; h: number; clips: RenderClip[]; segments: RenderSeg[]; ass: string | null; totalMs: number }
 
 /** Web output height cap: 960p keeps a 15 s 9:16 export near a minute. */
 export const WEB_MAX_H = 960;
@@ -24,7 +26,27 @@ export function planRender(p: any, w: number, h: number): RenderPlan {
     .filter((i: { type: string }) => i.type === "clip")
     .sort((a: { start_ms: number }, b: { start_ms: number }) => a.start_ms - b.start_ms);
   if (!clips.length) throw new Error("Add a clip to the video track first.");
-  return { w, h, clips, ass: hasOverlays(p) ? buildAss(p, w, h) : null, totalMs: clips.reduce((n, c) => n + c.duration_ms, 0) };
+  // Timeline time is preserved like the desktop renderer: empty stretches
+  // before or between clips render as black with silence.
+  const segments: RenderSeg[] = [];
+  let cursor = 0;
+  for (const c of clips) {
+    const start = c.start_ms ?? cursor;
+    if (start > cursor) segments.push({ kind: "gap", duration_ms: start - cursor });
+    segments.push({ kind: "clip", clip: c });
+    cursor = Math.max(cursor, start + c.duration_ms);
+  }
+  return { w, h, clips, segments, ass: hasOverlays(p) ? buildAss(p, w, h) : null, totalMs: cursor };
+}
+
+/** Black frames + silence for an empty stretch, encoded like clip segments so
+ *  the stream-copy concat stays valid. */
+export function gapArgs(durationMs: number, out: string, w: number, h: number): string[] {
+  const d = String(durationMs / 1000);
+  return ["-f", "lavfi", "-t", d, "-i", `color=c=black:s=${w}x${h}:r=30`,
+    "-f", "lavfi", "-t", d, "-i", "anullsrc=r=44100:cl=stereo",
+    "-filter_complex", "[0:v]setsar=1,format=yuv420p[v];[1:a]anull[a]",
+    "-map", "[v]", "-map", "[a]", "-c:v", "libx264", "-preset", "ultrafast", "-crf", "24", "-c:a", "aac", "-b:a", "128k", "-ac", "2", "-t", d, out];
 }
 
 export function clipArgs(c: RenderClip, input: string, out: string, w: number, h: number): string[] {
@@ -63,7 +85,17 @@ export async function renderMp4(
   f.on("progress", handler);
   const segs: string[] = [];
   try {
-    for (const [i, c] of plan.clips.entries()) {
+    for (const [i, seg] of plan.segments.entries()) {
+      const out = `seg${i}.mp4`;
+      if (seg.kind === "gap") {
+        base = done; span = seg.duration_ms;
+        const code = await f.exec(gapArgs(seg.duration_ms, out, plan.w, plan.h));
+        if (code !== 0) throw new Error(`Couldn't render a timeline gap (ffmpeg exit ${code}).`);
+        segs.push(out);
+        done += seg.duration_ms;
+        continue;
+      }
+      const c = seg.clip;
       let input = written.get(c.source);
       if (!input) {
         const file = fileFor(c.source);
@@ -72,7 +104,6 @@ export async function renderMp4(
         await f.writeFile(input, await fetchFile(file));
         written.set(c.source, input);
       }
-      const out = `seg${i}.mp4`;
       base = done; span = c.duration_ms;
       let code = await f.exec(clipArgs(c, input, out, plan.w, plan.h));
       if (code !== 0) code = await f.exec(silentClipArgs(c, input, out, plan.w, plan.h));
