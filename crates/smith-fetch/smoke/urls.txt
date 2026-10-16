@@ -1,0 +1,32 @@
+# Nightly smoke list for smith-fetch. Public, safe-for-work, non-DRM only.
+# Format: <check> <url>   checks: ytdlp | scrape | manifest | direct
+# Prefix "!" = required (the job fails if it breaks); others are reported only,
+# because big sites often block cloud runners (bot walls, region locks).
+!ytdlp https://www.youtube.com/watch?v=aqz-KE-bpKQ
+ytdlp https://www.youtube.com/watch?v=jNQXAC9IVRw
+ytdlp https://youtu.be/YE7VzlLtp-4
+ytdlp https://www.youtube.com/watch?v=BaW_jenozKc
+ytdlp https://yt-dlp.bandcamp.com/track/youtube-dl-test-song
+ytdlp https://www.dailymotion.com/video/x5kesuj
+ytdlp https://www.youtube.com/shorts/BGQWPY4IigY
+!ytdlp https://vimeo.com/76979871
+ytdlp https://player.vimeo.com/video/1084537
+!ytdlp https://archive.org/details/BigBuckBunny_124
+ytdlp https://archive.org/details/ElephantsDream
+!ytdlp https://commons.wikimedia.org/wiki/File:Big_Buck_Bunny_4K.webm
+ytdlp https://www.ted.com/talks/sir_ken_robinson_do_schools_kill_creativity
+ytdlp https://soundcloud.com/forss/flickermood
+ytdlp https://www.reddit.com/r/videos/comments/6rrwyj/that_small_heart_attack/
+ytdlp https://www.bbc.co.uk/news/av/world-us-canada-45690185
+ytdlp https://streamable.com/moo
+!manifest https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8
+!manifest https://devstreaming-cdn.apple.com/videos/streaming/examples/img_bipbop_adv_example_fmp4/master.m3u8
+manifest https://bitdash-a.akamaihd.net/content/sintel/hls/playlist.m3u8
+!manifest https://dash.akamaized.net/akamai/bbb_30fps/bbb_30fps.mpd
+manifest https://dash.akamaized.net/envivio/EnvivioDash3/manifest.mpd
+!direct https://download.blender.org/peach/bigbuckbunny_movies/BigBuckBunny_320x180.mp4
+direct https://www.w3schools.com/html/mov_bbb.mp4
+direct https://upload.wikimedia.org/wikipedia/commons/transcoded/c/c0/Big_Buck_Bunny_4K.webm/Big_Buck_Bunny_4K.webm.360p.webm
+scrape https://www.w3schools.com/html/html5_video.asp
+!scrape https://interactive-examples.mdn.mozilla.net/pages/tabbed/video.html
+scrape https://peach.blender.org/download/
