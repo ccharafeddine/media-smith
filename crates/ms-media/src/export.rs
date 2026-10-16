@@ -818,8 +818,14 @@ mod tests {
         )
         .unwrap();
         let g = graph(&args);
-        assert!(g.starts_with("color=c=black:s=1080x1920:r=30:d=0.900"), "{g}");
-        assert!(g.contains("anullsrc=r=48000:cl=stereo,atrim=duration=0.900[a0]"), "{g}");
+        assert!(
+            g.starts_with("color=c=black:s=1080x1920:r=30:d=0.900"),
+            "{g}"
+        );
+        assert!(
+            g.contains("anullsrc=r=48000:cl=stereo,atrim=duration=0.900[a0]"),
+            "{g}"
+        );
         assert!(g.contains("color=c=black:s=1080x1920:r=30:d=1.100"), "{g}");
         assert!(g.contains("concat=n=4:v=1:a=1"), "{g}");
         assert_eq!(export_duration_ms(&p), 5000);
