@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/ms-media", "crates/ms-import", "crates/ms-project", "crates/ms-ai", "crates/ms-captions", "app/src-tauri"]
+members = ["crates/smith-fetch", "crates/ms-media", "crates/ms-import", "crates/ms-project", "crates/ms-ai", "crates/ms-captions", "app/src-tauri"]
 
 [workspace.package]
 version = "0.1.0"

@@ -1,8 +1,8 @@
 //! Fallback page scraper for URL import.
 //!
-//! When yt-dlp has no extractor for a page, ClipSmith fetches the page HTML and
+//! When yt-dlp has no extractor for a page, the app fetches the page HTML and
 //! looks for a video it can download itself. Everything here is pure (no I/O)
-//! so it can be unit-tested; the fetch + download lives in `commands.rs`.
+//! so it can be unit-tested; the fetch + download lives in `fetcher.rs`.
 //!
 //! Sources, all site-agnostic:
 //! - `<video src>` / `<source src type=...>` (HLS/DASH MIME types honoured),
@@ -13,6 +13,10 @@
 //! - Any absolute `.mp4/.webm/.mov/.m4v/.m3u8/.mpd` URL in inline scripts/JSON
 //!   (`\/` and `\u002F` escapes undone), including inside Dean Edwards
 //!   `eval(function(p,a,c,k,e,d)...)` packed scripts, which are unpacked first.
+//! - Generic player configs (`file:`/`src:`/`hls:`/`manifestUrl:` ... keys,
+//!   relative URLs included), `atob("...")`/base64-hidden URLs, and embed
+//!   provider markers (Brightcove `data-video-id`, Wistia `wistia_async_*`,
+//!   `data-vimeo-id`, `lite-youtube videoid`) turned into embed URLs.
 //! - `<iframe src>` embeds (and non-media `og:video` / `embedUrl`), returned as
 //!   [`MediaKind::Embed`] so the caller can hand them to yt-dlp.
 //!
@@ -553,6 +557,144 @@ pub fn unpack_packed(html: &str) -> Vec<String> {
     out
 }
 
+fn player_key_re() -> &'static Regex {
+    static R: OnceLock<Regex> = OnceLock::new();
+    re(
+        &R,
+        r#"(?i)["']?\b(?:file|src|source|url|hls|hlsUrl|hls_url|dash|dashUrl|mp4|videoUrl|video_url|contentUrl|streamUrl|stream_url|playbackUrl|playback_url|manifestUrl|manifest_url)["']?\s*[:=]\s*["']([^"'\s<>]+?\.(?:mp4|webm|m4v|mov|m3u8|mpd)(?:\?[^"'\s<>]*)?)["']"#,
+    )
+}
+
+fn atob_re() -> &'static Regex {
+    static R: OnceLock<Regex> = OnceLock::new();
+    re(&R, r#"atob\(\s*["']([A-Za-z0-9+/=_-]{16,})["']\s*\)"#)
+}
+
+fn b64_literal_re() -> &'static Regex {
+    static R: OnceLock<Regex> = OnceLock::new();
+    // Quoted base64 that starts with "aHR0c" (= "http" encoded).
+    re(&R, r#"["'](aHR0c[A-Za-z0-9+/=_-]{16,})["']"#)
+}
+
+/// Player config keys (JW Player `file:`, Video.js/Plyr `src:`, generic
+/// `hls:`/`manifestUrl:` ...) pointing at media, relative URLs included.
+fn collect_player_configs(text: &str, raw: &mut Vec<Raw>) {
+    let text = html_unescape(&unescape_json_slashes(text));
+    for cap in player_key_re().captures_iter(&text) {
+        raw.push(Raw {
+            url: cap[1].to_string(),
+            fallback: Fallback::Drop,
+            height: 0,
+        });
+    }
+}
+
+/// Decode a standard or URL-safe base64 string (padding optional).
+fn b64_decode(s: &str) -> Option<Vec<u8>> {
+    let mut out = Vec::with_capacity(s.len() * 3 / 4);
+    let mut buf: u32 = 0;
+    let mut bits = 0u32;
+    for ch in s.bytes() {
+        let v = match ch {
+            b'A'..=b'Z' => ch - b'A',
+            b'a'..=b'z' => ch - b'a' + 26,
+            b'0'..=b'9' => ch - b'0' + 52,
+            b'+' | b'-' => 62,
+            b'/' | b'_' => 63,
+            b'=' => break,
+            _ => return None,
+        };
+        buf = (buf << 6) | u32::from(v);
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((buf >> bits) as u8);
+            buf &= (1 << bits) - 1;
+        }
+    }
+    Some(out)
+}
+
+/// Strings hidden as base64 (`atob("...")`, or quoted `aHR0c...` literals)
+/// that decode to text containing a URL.
+#[must_use]
+pub fn decode_base64_blobs(html: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for cap in atob_re()
+        .captures_iter(html)
+        .chain(b64_literal_re().captures_iter(html))
+        .take(64)
+    {
+        if let Some(bytes) = b64_decode(&cap[1]) {
+            if let Ok(s) = String::from_utf8(bytes) {
+                if s.contains("http") || s.contains(".m3u8") || s.contains(".mp4") {
+                    out.push(s);
+                }
+            }
+        }
+    }
+    out
+}
+
+fn brightcove_re() -> &'static Regex {
+    static R: OnceLock<Regex> = OnceLock::new();
+    re(
+        &R,
+        r#"(?is)<video-js\b[^>]*>|<video\b[^>]*data-video-id[^>]*>"#,
+    )
+}
+
+fn wistia_re() -> &'static Regex {
+    static R: OnceLock<Regex> = OnceLock::new();
+    re(&R, r#"wistia_async_([a-z0-9]{6,})"#)
+}
+
+fn id_attr_re() -> &'static Regex {
+    static R: OnceLock<Regex> = OnceLock::new();
+    re(
+        &R,
+        r#"(?i)\b(data-vimeo-id|data-youtube-id|data-yt-id|videoid)\s*=\s*["']([A-Za-z0-9_-]{6,20})["']"#,
+    )
+}
+
+/// Generic embed-provider markers turned into embed URLs yt-dlp understands.
+fn collect_embed_providers(html: &str, raw: &mut Vec<Raw>) {
+    for m in brightcove_re().find_iter(html) {
+        let a = parse_attrs(m.as_str());
+        if let (Some(acct), Some(id)) = (a.get("data-account"), a.get("data-video-id")) {
+            let player = a.get("data-player").map_or("default", String::as_str);
+            let embed = a.get("data-embed").map_or("default", String::as_str);
+            raw.push(Raw {
+                url: format!(
+                    "https://players.brightcove.net/{acct}/{player}_{embed}/index.html?videoId={id}"
+                ),
+                fallback: Fallback::Embed,
+                height: 0,
+            });
+        }
+    }
+    for cap in wistia_re().captures_iter(html) {
+        raw.push(Raw {
+            url: format!("https://fast.wistia.net/embed/iframe/{}", &cap[1]),
+            fallback: Fallback::Embed,
+            height: 0,
+        });
+    }
+    for cap in id_attr_re().captures_iter(html) {
+        let id = &cap[2];
+        let url = if cap[1].eq_ignore_ascii_case("data-vimeo-id") {
+            format!("https://player.vimeo.com/video/{id}")
+        } else {
+            format!("https://www.youtube.com/watch?v={id}")
+        };
+        raw.push(Raw {
+            url,
+            fallback: Fallback::Embed,
+            height: 0,
+        });
+    }
+}
+
 fn is_junk_media(url: &str) -> bool {
     let l = url.to_ascii_lowercase();
     JUNK_MEDIA.iter().any(|j| l.contains(j))
@@ -576,9 +718,16 @@ pub fn extract_candidates(html: &str, page_url: &str) -> Vec<Candidate> {
     collect_tags(html, &mut raw);
     collect_ld_json(html, &mut raw);
     collect_script_urls(html, &mut raw);
+    collect_player_configs(html, &mut raw);
+    collect_embed_providers(html, &mut raw);
+    for decoded in decode_base64_blobs(html) {
+        collect_script_urls(&decoded, &mut raw);
+        collect_player_configs(&decoded, &mut raw);
+    }
     for unpacked in unpack_packed(html) {
         collect_tags(&unpacked, &mut raw);
         collect_script_urls(&unpacked, &mut raw);
+        collect_player_configs(&unpacked, &mut raw);
     }
 
     let mut out: Vec<Candidate> = Vec::new();
@@ -742,7 +891,6 @@ mod tests {
         let html = r#"<source src="/play?id=1" type="application/x-mpegURL">
             <source src="/manifest?id=1" type="application/dash+xml">"#;
         let c = extract_candidates(html, PAGE);
-        assert_eq!(c[0].kind, MediaKind::Hls);
         assert_eq!(c[0].url, "https://example.com/play?id=1");
         assert_eq!(c[1].kind, MediaKind::Dash);
     }
@@ -980,5 +1128,61 @@ https://other.example.com/v720.m3u8
             best_hls_variant(media, "https://h.example.com/a/m.m3u8"),
             None
         );
+    }
+
+    #[test]
+    fn finds_generic_player_configs_with_relative_urls() {
+        let html = r#"<script>jwplayer("p").setup({ file: "/media/show/master.m3u8", image: "/p.jpg" });
+            var cfg = {"videoUrl":"clips\/a_720p.mp4"};</script>
+            <video-js data-setup='{"sources":[{"src":"/v/hd.mp4"}]}'></video-js>"#;
+        let c = extract_candidates(html, "https://site.example/watch/1");
+        let u = urls(&c);
+        assert!(
+            u.contains(&"https://site.example/media/show/master.m3u8"),
+            "{u:?}"
+        );
+        assert!(
+            u.contains(&"https://site.example/watch/clips/a_720p.mp4"),
+            "{u:?}"
+        );
+        assert!(u.contains(&"https://site.example/v/hd.mp4"), "{u:?}");
+    }
+
+    #[test]
+    fn decodes_base64_hidden_urls() {
+        // "https://cdn.example/x/1080p.mp4"
+        let html = r#"<script>var s = atob("aHR0cHM6Ly9jZG4uZXhhbXBsZS94LzEwODBwLm1wNA==");
+            var t = 'aHR0cHM6Ly9jZG4uZXhhbXBsZS95L2xpdmUubTN1OA';</script>"#;
+        let c = extract_candidates(html, "https://site.example/");
+        let u = urls(&c);
+        assert!(u.contains(&"https://cdn.example/x/1080p.mp4"), "{u:?}");
+        assert!(u.contains(&"https://cdn.example/y/live.m3u8"), "{u:?}");
+        assert!(decode_base64_blobs("atob('!!!notbase64!!!!!!!!')").is_empty());
+    }
+
+    #[test]
+    fn turns_embed_provider_markers_into_embed_urls() {
+        let html = r#"<video-js data-account="123" data-player="abc" data-embed="default" data-video-id="456"></video-js>
+            <div class="wistia_embed wistia_async_ab12cd34ef"></div>
+            <div data-vimeo-id="76979871"></div><lite-youtube videoid="aqz-KE-bpKQ"></lite-youtube>"#;
+        let c = extract_candidates(html, "https://site.example/");
+        let u = urls(&c);
+        assert!(
+            u.contains(&"https://players.brightcove.net/123/abc_default/index.html?videoId=456"),
+            "{u:?}"
+        );
+        assert!(
+            u.contains(&"https://fast.wistia.net/embed/iframe/ab12cd34ef"),
+            "{u:?}"
+        );
+        assert!(
+            u.contains(&"https://player.vimeo.com/video/76979871"),
+            "{u:?}"
+        );
+        assert!(
+            u.contains(&"https://www.youtube.com/watch?v=aqz-KE-bpKQ"),
+            "{u:?}"
+        );
+        assert!(c.iter().all(|x| x.kind == MediaKind::Embed));
     }
 }

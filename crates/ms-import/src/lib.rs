@@ -4,5 +4,6 @@
 //! site-specific logic. Network I/O lives in the app shell; everything here is
 //! pure and unit tested.
 
-pub mod scrape;
+/// The generic page scraper now lives in the shared `smith-fetch` crate.
+pub use smith_fetch::scrape;
 pub mod ytdlp;

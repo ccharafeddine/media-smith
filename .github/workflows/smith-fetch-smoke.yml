@@ -1,0 +1,26 @@
+name: smith-fetch smoke
+
+# Nightly check that public, safe, non-DRM test URLs still resolve with the
+# latest yt-dlp and the smith-fetch scraper. No files are fully downloaded.
+# Required entries (prefixed "!") fail the job; the rest are reported only,
+# since big sites often block cloud runners.
+on:
+  schedule:
+    - cron: "17 9 * * *"
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: System deps
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev pkg-config
+      - uses: Swatinem/rust-cache@v2
+      - name: Latest yt-dlp
+        run: |
+          curl -fL --retry 3 -o yt-dlp https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux
+          chmod +x yt-dlp && ./yt-dlp --version
+      - name: Smoke
+        run: cargo run -q -p smith-fetch --bin smith-fetch-smoke -- crates/smith-fetch/smoke/urls.txt ./yt-dlp
