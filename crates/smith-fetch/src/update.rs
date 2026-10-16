@@ -66,7 +66,10 @@ pub struct Updater {
 }
 
 fn now() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 fn exe(name: &str) -> String {
@@ -118,7 +121,10 @@ pub fn find_sha256(listing: &str, asset: &str) -> Option<String> {
     let is_hex = |t: &str| t.len() == 64 && t.chars().all(|c| c.is_ascii_hexdigit());
     for line in listing.lines() {
         let toks: Vec<&str> = line.split_whitespace().collect();
-        if toks.iter().any(|t| t.trim_start_matches('*').trim_start_matches("./") == asset) {
+        if toks
+            .iter()
+            .any(|t| t.trim_start_matches('*').trim_start_matches("./") == asset)
+        {
             if let Some(h) = toks.iter().find(|t| is_hex(t)) {
                 return Some(h.to_ascii_lowercase());
             }
@@ -142,7 +148,13 @@ pub fn tag_is_newer(current: Option<&str>, tag: &str) -> bool {
     let parse = |s: &str| -> Vec<u64> {
         s.trim_start_matches(['v', 'V'])
             .split(['.', '-'])
-            .map(|p| p.chars().take_while(char::is_ascii_digit).collect::<String>().parse().unwrap_or(0))
+            .map(|p| {
+                p.chars()
+                    .take_while(char::is_ascii_digit)
+                    .collect::<String>()
+                    .parse()
+                    .unwrap_or(0)
+            })
             .collect()
     };
     match current {
@@ -176,11 +188,18 @@ async fn latest_tag(c: &reqwest::Client, repo: &str) -> Result<String, String> {
 }
 
 async fn get_bytes(c: &reqwest::Client, url: &str) -> Result<Vec<u8>, String> {
-    let r = c.get(url).send().await.map_err(|e| format!("download failed: {e}"))?;
+    let r = c
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| format!("download failed: {e}"))?;
     if !r.status().is_success() {
         return Err(format!("download failed: HTTP {}", r.status()));
     }
-    r.bytes().await.map(|b| b.to_vec()).map_err(|e| format!("download failed: {e}"))
+    r.bytes()
+        .await
+        .map(|b| b.to_vec())
+        .map_err(|e| format!("download failed: {e}"))
 }
 
 fn make_executable(p: &Path) -> std::io::Result<()> {
@@ -197,7 +216,11 @@ fn make_executable(p: &Path) -> std::io::Result<()> {
 impl Updater {
     #[must_use]
     pub fn new(bin_dir: PathBuf, bundled_ytdlp: PathBuf) -> Self {
-        Self { bin_dir, bundled_ytdlp, lock: Mutex::new(()) }
+        Self {
+            bin_dir,
+            bundled_ytdlp,
+            lock: Mutex::new(()),
+        }
     }
 
     fn state_path(&self) -> PathBuf {
@@ -206,7 +229,10 @@ impl Updater {
 
     #[must_use]
     pub fn state(&self) -> State {
-        std::fs::read_to_string(self.state_path()).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
+        std::fs::read_to_string(self.state_path())
+            .ok()
+            .and_then(|t| serde_json::from_str(&t).ok())
+            .unwrap_or_default()
     }
 
     fn save_state(&self, s: &State) {
@@ -235,7 +261,10 @@ impl Updater {
     #[must_use]
     pub fn ytdlp_path(&self) -> PathBuf {
         let u = self.updated_ytdlp();
-        if std::fs::metadata(&u).map(|m| m.len() > 1_000_000).unwrap_or(false) {
+        if std::fs::metadata(&u)
+            .map(|m| m.len() > 1_000_000)
+            .unwrap_or(false)
+        {
             u
         } else {
             self.bundled_ytdlp.clone()
@@ -246,7 +275,10 @@ impl Updater {
     #[must_use]
     pub fn deno_path(&self) -> Option<PathBuf> {
         let p = self.bin_dir.join(exe("deno"));
-        std::fs::metadata(&p).map(|m| m.len() > 1_000_000).unwrap_or(false).then_some(p)
+        std::fs::metadata(&p)
+            .map(|m| m.len() > 1_000_000)
+            .unwrap_or(false)
+            .then_some(p)
     }
 
     pub async fn status(&self) -> Status {
@@ -258,7 +290,11 @@ impl Updater {
         };
         Status {
             ytdlp_version: ytdlp::version(&yt).await,
-            ytdlp_source: if yt == self.bundled_ytdlp { "bundled".into() } else { "updated".into() },
+            ytdlp_source: if yt == self.bundled_ytdlp {
+                "bundled".into()
+            } else {
+                "updated".into()
+            },
             ytdlp_checked: st.ytdlp_checked,
             deno_version,
             auto_update: st.auto_update.unwrap_or(true),
@@ -308,17 +344,33 @@ impl Updater {
         self.save_state(&st);
         let current = ytdlp::version(&self.ytdlp_path()).await;
         if !tag_is_newer(current.as_deref(), &tag) {
-            return Ok(Outcome { updated: false, version: current });
+            return Ok(Outcome {
+                updated: false,
+                version: current,
+            });
         }
         let base = format!("https://github.com/{YTDLP_REPO}/releases/download/{tag}");
-        let sums = String::from_utf8_lossy(&get_bytes(&c, &format!("{base}/SHA2-256SUMS")).await?).into_owned();
-        let want = find_sha256(&sums, asset).ok_or("the release has no checksum for this platform")?;
+        let sums = String::from_utf8_lossy(&get_bytes(&c, &format!("{base}/SHA2-256SUMS")).await?)
+            .into_owned();
+        let want =
+            find_sha256(&sums, asset).ok_or("the release has no checksum for this platform")?;
         let bytes = get_bytes(&c, &format!("{base}/{asset}")).await?;
         if sha256_hex(&bytes) != want {
-            return Err("the downloaded yt-dlp failed its checksum; keeping the current one".into());
+            return Err(
+                "the downloaded yt-dlp failed its checksum; keeping the current one".into(),
+            );
         }
-        let version = self.install(&bytes, "yt-dlp", |p| async move { ytdlp::version(&p).await }).await?;
-        Ok(Outcome { updated: true, version: Some(version) })
+        let version = self
+            .install(
+                &bytes,
+                "yt-dlp",
+                |p| async move { ytdlp::version(&p).await },
+            )
+            .await?;
+        Ok(Outcome {
+            updated: true,
+            version: Some(version),
+        })
     }
 
     /// Download Deno if it isn't here yet (first YouTube use).
@@ -330,7 +382,8 @@ impl Updater {
             return Ok(p);
         }
         self.update_deno().await?;
-        self.deno_path().ok_or_else(|| "Deno wasn't installed".to_string())
+        self.deno_path()
+            .ok_or_else(|| "Deno wasn't installed".to_string())
     }
 
     /// Install or refresh Deno from its latest GitHub release (verified).
@@ -350,18 +403,28 @@ impl Updater {
             None => None,
         };
         if current.is_some() && !tag_is_newer(current.as_deref(), &tag) {
-            return Ok(Outcome { updated: false, version: current });
+            return Ok(Outcome {
+                updated: false,
+                version: current,
+            });
         }
         let base = format!("https://github.com/{DENO_REPO}/releases/download/{tag}");
-        let sums = String::from_utf8_lossy(&get_bytes(&c, &format!("{base}/{asset}.sha256sum")).await?).into_owned();
+        let sums =
+            String::from_utf8_lossy(&get_bytes(&c, &format!("{base}/{asset}.sha256sum")).await?)
+                .into_owned();
         let want = find_sha256(&sums, asset).ok_or("the Deno release has no checksum")?;
         let zip = get_bytes(&c, &format!("{base}/{asset}")).await?;
         if sha256_hex(&zip) != want {
             return Err("the downloaded Deno failed its checksum".into());
         }
         let bin = unzip_one(&zip, &exe("deno"))?;
-        let version = self.install(&bin, "deno", |p| async move { deno_version(&p).await }).await?;
-        Ok(Outcome { updated: true, version: Some(version) })
+        let version = self
+            .install(&bin, "deno", |p| async move { deno_version(&p).await })
+            .await?;
+        Ok(Outcome {
+            updated: true,
+            version: Some(version),
+        })
     }
 
     /// Write `bytes` as `<bin_dir>/<name>.new`, smoke-run it, then swap it in.
@@ -383,10 +446,13 @@ impl Updater {
         let _ = std::fs::remove_file(&probe);
         let Some(version) = version else {
             let _ = std::fs::remove_file(&staged);
-            return Err(format!("the new {name} wouldn't run; keeping the current one"));
+            return Err(format!(
+                "the new {name} wouldn't run; keeping the current one"
+            ));
         };
         let _ = std::fs::remove_file(&final_path);
-        std::fs::rename(&staged, &final_path).map_err(|e| format!("couldn't install the update: {e}"))?;
+        std::fs::rename(&staged, &final_path)
+            .map_err(|e| format!("couldn't install the update: {e}"))?;
         Ok(version)
     }
 }
@@ -406,11 +472,20 @@ pub async fn deno_version(p: &Path) -> Option<String> {
 /// If the archive is unreadable or lacks the file.
 pub fn unzip_one(z: &[u8], name: &str) -> Result<Vec<u8>, String> {
     use std::io::Read;
-    let u16_at = |i: usize| -> Option<usize> { z.get(i..i + 2).map(|b| usize::from(u16::from_le_bytes([b[0], b[1]]))) };
-    let u32_at = |i: usize| -> Option<usize> { z.get(i..i + 4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]) as usize) };
+    let u16_at = |i: usize| -> Option<usize> {
+        z.get(i..i + 2)
+            .map(|b| usize::from(u16::from_le_bytes([b[0], b[1]])))
+    };
+    let u32_at = |i: usize| -> Option<usize> {
+        z.get(i..i + 4)
+            .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]) as usize)
+    };
     let bad = || "bad archive".to_string();
     // End of central directory: last "PK\x05\x06".
-    let eocd = (0..z.len().saturating_sub(21)).rev().find(|&i| z[i..].starts_with(b"PK\x05\x06")).ok_or_else(bad)?;
+    let eocd = (0..z.len().saturating_sub(21))
+        .rev()
+        .find(|&i| z[i..].starts_with(b"PK\x05\x06"))
+        .ok_or_else(bad)?;
     let count = u16_at(eocd + 10).ok_or_else(bad)?;
     let mut p = u32_at(eocd + 16).ok_or_else(bad)?;
     for _ in 0..count {
@@ -424,7 +499,8 @@ pub fn unzip_one(z: &[u8], name: &str) -> Result<Vec<u8>, String> {
         let elen = u16_at(p + 30).ok_or_else(bad)?;
         let clen = u16_at(p + 32).ok_or_else(bad)?;
         let local = u32_at(p + 42).ok_or_else(bad)?;
-        let fname = String::from_utf8_lossy(z.get(p + 46..p + 46 + nlen).ok_or_else(bad)?).into_owned();
+        let fname =
+            String::from_utf8_lossy(z.get(p + 46..p + 46 + nlen).ok_or_else(bad)?).into_owned();
         p += 46 + nlen + elen + clen;
         if fname.rsplit('/').next() != Some(name) {
             continue;
@@ -437,7 +513,9 @@ pub fn unzip_one(z: &[u8], name: &str) -> Result<Vec<u8>, String> {
             0 => Ok(data.to_vec()),
             8 => {
                 let mut v = Vec::with_capacity(usize_);
-                flate2::read::DeflateDecoder::new(data).read_to_end(&mut v).map_err(|e| e.to_string())?;
+                flate2::read::DeflateDecoder::new(data)
+                    .read_to_end(&mut v)
+                    .map_err(|e| e.to_string())?;
                 Ok(v)
             }
             _ => Err("unsupported compression in archive".to_string()),
@@ -453,19 +531,32 @@ mod tests {
     #[test]
     fn finds_checksums() {
         let h = "a".repeat(64);
-        let listing = format!("{}  yt-dlp\n{h}  yt-dlp.exe\n{}  yt-dlp_macos\n", "b".repeat(64), "c".repeat(64));
+        let listing = format!(
+            "{}  yt-dlp\n{h}  yt-dlp.exe\n{}  yt-dlp_macos\n",
+            "b".repeat(64),
+            "c".repeat(64)
+        );
         assert_eq!(find_sha256(&listing, "yt-dlp.exe"), Some(h.clone()));
         assert_eq!(find_sha256(&listing, "yt-dlp"), Some("b".repeat(64)));
         assert_eq!(find_sha256(&listing, "nope"), None);
         let single = format!("{}\n", "D".repeat(64));
         assert_eq!(find_sha256(&single, "deno.zip"), Some("d".repeat(64)));
-        let ps = format!("Algorithm Hash Path\nSHA256 {} C:\\a\\deno-x86_64-pc-windows-msvc.zip", "e".repeat(64));
-        assert_eq!(find_sha256(&ps, "deno-x86_64-pc-windows-msvc.zip"), Some("e".repeat(64)));
+        let ps = format!(
+            "Algorithm Hash Path\nSHA256 {} C:\\a\\deno-x86_64-pc-windows-msvc.zip",
+            "e".repeat(64)
+        );
+        assert_eq!(
+            find_sha256(&ps, "deno-x86_64-pc-windows-msvc.zip"),
+            Some("e".repeat(64))
+        );
     }
 
     #[test]
     fn sha_and_versions() {
-        assert_eq!(sha256_hex(b"abc"), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+        assert_eq!(
+            sha256_hex(b"abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
         assert!(tag_is_newer(Some("2026.01.01"), "2026.02.03"));
         assert!(!tag_is_newer(Some("2026.02.03"), "2026.02.03"));
         assert!(!tag_is_newer(Some("2026.02.03.123"), "2026.02.03"));
@@ -499,16 +590,29 @@ mod tests {
         let comp = e.finish().unwrap();
         let (n, c, u) = (name.len() as u16, comp.len() as u32, body.len() as u32);
         let mut z = Vec::new();
-        z.extend(b"PK\x03\x04"); z.extend([20, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
-        z.extend(c.to_le_bytes()); z.extend(u.to_le_bytes()); z.extend(n.to_le_bytes()); z.extend([0, 0]);
-        z.extend(name.as_bytes()); z.extend(&comp);
+        z.extend(b"PK\x03\x04");
+        z.extend([20, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        z.extend(c.to_le_bytes());
+        z.extend(u.to_le_bytes());
+        z.extend(n.to_le_bytes());
+        z.extend([0, 0]);
+        z.extend(name.as_bytes());
+        z.extend(&comp);
         let cd = z.len() as u32;
-        z.extend(b"PK\x01\x02"); z.extend([20, 0, 20, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
-        z.extend(c.to_le_bytes()); z.extend(u.to_le_bytes()); z.extend(n.to_le_bytes());
-        z.extend([0u8; 12]); z.extend(0u32.to_le_bytes()); z.extend(name.as_bytes());
+        z.extend(b"PK\x01\x02");
+        z.extend([20, 0, 20, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        z.extend(c.to_le_bytes());
+        z.extend(u.to_le_bytes());
+        z.extend(n.to_le_bytes());
+        z.extend([0u8; 12]);
+        z.extend(0u32.to_le_bytes());
+        z.extend(name.as_bytes());
         let cdlen = z.len() as u32 - cd;
-        z.extend(b"PK\x05\x06"); z.extend([0, 0, 0, 0, 1, 0, 1, 0]);
-        z.extend(cdlen.to_le_bytes()); z.extend(cd.to_le_bytes()); z.extend([0, 0]);
+        z.extend(b"PK\x05\x06");
+        z.extend([0, 0, 0, 0, 1, 0, 1, 0]);
+        z.extend(cdlen.to_le_bytes());
+        z.extend(cd.to_le_bytes());
+        z.extend([0, 0]);
         z
     }
 

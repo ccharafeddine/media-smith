@@ -19,7 +19,7 @@ use crate::fetcher::{DownloadOptions, Fetcher, Hooks, MediaInfo, Tools};
 use crate::http::{self, Ctx, MAX_MANIFEST_BYTES};
 use crate::sniff::{self, Collector, Hit, HitKind, INJECT_JS};
 use crate::update::{Outcome, Status, Updater};
-use crate::util::{self, is_http_url};
+use crate::util::is_http_url;
 use crate::ytdlp;
 
 /// Label of the visible Browse window.
@@ -97,7 +97,11 @@ impl SmithFetch {
     fn options(&self, o: Option<DownloadOptions>) -> DownloadOptions {
         let mut o = o.unwrap_or_default();
         if o.browser_cookies.is_none() {
-            o.browser_cookies = self.settings.lock().map(|s| s.browser_cookies.clone()).unwrap_or_default();
+            o.browser_cookies = self
+                .settings
+                .lock()
+                .map(|s| s.browser_cookies.clone())
+                .unwrap_or_default();
         }
         o
     }
@@ -107,8 +111,15 @@ impl SmithFetch {
 #[must_use]
 pub fn sidecar_path(name: &str) -> PathBuf {
     let exe = std::env::current_exe().unwrap_or_default();
-    let dir = exe.parent().map(std::path::Path::to_path_buf).unwrap_or_default();
-    dir.join(if cfg!(windows) { format!("{name}.exe") } else { name.to_string() })
+    let dir = exe
+        .parent()
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or_default();
+    dir.join(if cfg!(windows) {
+        format!("{name}.exe")
+    } else {
+        name.to_string()
+    })
 }
 
 /// Set up the engine: managed state, daily update check, clipboard watcher.
@@ -116,7 +127,11 @@ pub fn sidecar_path(name: &str) -> PathBuf {
 ///
 /// # Errors
 /// If the app data folder can't be resolved.
-pub fn init<R: Runtime>(app: &AppHandle<R>, app_name: &str, download_dir: PathBuf) -> Result<(), String> {
+pub fn init<R: Runtime>(
+    app: &AppHandle<R>,
+    app_name: &str,
+    download_dir: PathBuf,
+) -> Result<(), String> {
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let updater = Arc::new(Updater::new(data_dir.join("bin"), sidecar_path("yt-dlp")));
     let (h1, h2) = (app.clone(), app.clone());
@@ -128,7 +143,10 @@ pub fn init<R: Runtime>(app: &AppHandle<R>, app_name: &str, download_dir: PathBu
             let _ = h2.emit("download-status", s.to_string());
         }),
     };
-    let tools = Tools { ffmpeg: sidecar_path("ffmpeg"), updater: updater.clone() };
+    let tools = Tools {
+        ffmpeg: sidecar_path("ffmpeg"),
+        updater: updater.clone(),
+    };
     let mut fetcher = Fetcher::new(app_name, tools, Store::new(data_dir.join("cookies")), hooks);
     let sniff_app = app.clone();
     fetcher.sniff = Some(Arc::new(move |url: String| {
@@ -165,10 +183,17 @@ pub fn init<R: Runtime>(app: &AppHandle<R>, app_name: &str, download_dir: PathBu
 /// Download a URL (yt-dlp → scraper → hidden sniff). Playlist downloads are
 /// moved to `<Documents>/<App>/Downloads/<time>/` and kept.
 #[tauri::command]
-pub async fn fetch_download<R: Runtime>(app: AppHandle<R>, url: String, options: Option<DownloadOptions>) -> Result<FetchResult, String> {
+pub async fn fetch_download<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    options: Option<DownloadOptions>,
+) -> Result<FetchResult, String> {
     let st = app.state::<SmithFetch>();
     let o = st.options(options);
-    let files = st.fetcher.download(url.trim(), &o, &st.download_dir).await?;
+    let files = st
+        .fetcher
+        .download(url.trim(), &o, &st.download_dir)
+        .await?;
     finish(&app, &st, files, o.playlist)
 }
 
@@ -178,11 +203,19 @@ pub async fn download_video<R: Runtime>(app: AppHandle<R>, url: String) -> Resul
     fetch_download(app, url, None).await.map(|r| r.path)
 }
 
-fn finish<R: Runtime>(app: &AppHandle<R>, st: &SmithFetch, files: Vec<PathBuf>, playlist: bool) -> Result<FetchResult, String> {
+fn finish<R: Runtime>(
+    app: &AppHandle<R>,
+    st: &SmithFetch,
+    files: Vec<PathBuf>,
+    playlist: bool,
+) -> Result<FetchResult, String> {
     let mut files = files;
     let mut folder = None;
     if playlist && files.len() > 1 {
-        let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
         let dest = app
             .path()
             .document_dir()
@@ -190,7 +223,8 @@ fn finish<R: Runtime>(app: &AppHandle<R>, st: &SmithFetch, files: Vec<PathBuf>, 
             .join(&st.app_name)
             .join("Downloads")
             .join(format!("playlist-{stamp}"));
-        std::fs::create_dir_all(&dest).map_err(|e| format!("couldn't create the playlist folder: {e}"))?;
+        std::fs::create_dir_all(&dest)
+            .map_err(|e| format!("couldn't create the playlist folder: {e}"))?;
         files = files
             .into_iter()
             .map(|f| {
@@ -204,14 +238,28 @@ fn finish<R: Runtime>(app: &AppHandle<R>, st: &SmithFetch, files: Vec<PathBuf>, 
             .collect();
         folder = Some(dest.to_string_lossy().into_owned());
     }
-    let list: Vec<String> = files.iter().map(|p| p.to_string_lossy().into_owned()).collect();
-    let path = list.first().cloned().ok_or("the download produced no file")?;
-    Ok(FetchResult { path, files: list, folder })
+    let list: Vec<String> = files
+        .iter()
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect();
+    let path = list
+        .first()
+        .cloned()
+        .ok_or("the download produced no file")?;
+    Ok(FetchResult {
+        path,
+        files: list,
+        folder,
+    })
 }
 
 /// Look up title / live / formats for the format picker.
 #[tauri::command]
-pub async fn fetch_probe<R: Runtime>(app: AppHandle<R>, url: String, options: Option<DownloadOptions>) -> Result<MediaInfo, String> {
+pub async fn fetch_probe<R: Runtime>(
+    app: AppHandle<R>,
+    url: String,
+    options: Option<DownloadOptions>,
+) -> Result<MediaInfo, String> {
     let st = app.state::<SmithFetch>();
     let o = st.options(options);
     st.fetcher.cancel.store(false, Ordering::SeqCst);
@@ -220,18 +268,28 @@ pub async fn fetch_probe<R: Runtime>(app: AppHandle<R>, url: String, options: Op
 
 #[tauri::command]
 pub fn cancel_download<R: Runtime>(app: AppHandle<R>) {
-    app.state::<SmithFetch>().fetcher.cancel.store(true, Ordering::SeqCst);
+    app.state::<SmithFetch>()
+        .fetcher
+        .cancel
+        .store(true, Ordering::SeqCst);
 }
 
 /// End a live recording and keep what was recorded.
 #[tauri::command]
 pub fn stop_recording<R: Runtime>(app: AppHandle<R>) {
-    app.state::<SmithFetch>().fetcher.stop.store(true, Ordering::SeqCst);
+    app.state::<SmithFetch>()
+        .fetcher
+        .stop
+        .store(true, Ordering::SeqCst);
 }
 
 /// Download one media request seen in the Browse window.
 #[tauri::command]
-pub async fn fetch_download_hit<R: Runtime>(app: AppHandle<R>, hit: Hit, options: Option<DownloadOptions>) -> Result<FetchResult, String> {
+pub async fn fetch_download_hit<R: Runtime>(
+    app: AppHandle<R>,
+    hit: Hit,
+    options: Option<DownloadOptions>,
+) -> Result<FetchResult, String> {
     let st = app.state::<SmithFetch>();
     let o = st.options(options);
     let files = st.fetcher.download_hit(&hit, &o, &st.download_dir).await?;
@@ -240,15 +298,28 @@ pub async fn fetch_download_hit<R: Runtime>(app: AppHandle<R>, hit: Hit, options
 
 // ---------------------------------------------------------------- browse / sniff
 
-fn build_window<R: Runtime>(app: &AppHandle<R>, label: &str, url: &str, visible: bool) -> Result<tauri::WebviewWindow<R>, String> {
-    let parsed: url::Url = url.parse().map_err(|_| "That isn't a valid link.".to_string())?;
+fn build_window<R: Runtime>(
+    app: &AppHandle<R>,
+    label: &str,
+    url: &str,
+    visible: bool,
+) -> Result<tauri::WebviewWindow<R>, String> {
+    let parsed: url::Url = url
+        .parse()
+        .map_err(|_| "That isn't a valid link.".to_string())?;
     if !matches!(parsed.scheme(), "http" | "https") {
         return Err("Only http and https links can be opened.".into());
     }
-    let script = if visible { INJECT_JS.to_string() } else { format!("window.__SMITH_SNIFF_AUTOPLAY__ = true;\n{INJECT_JS}") };
+    let script = if visible {
+        INJECT_JS.to_string()
+    } else {
+        format!("window.__SMITH_SNIFF_AUTOPLAY__ = true;\n{INJECT_JS}")
+    };
     let name = app.state::<SmithFetch>().app_name.clone();
     let w = WebviewWindowBuilder::new(app, label, WebviewUrl::External(parsed))
-        .title(format!("{name} Browser: play the video, then pick it in {name}"))
+        .title(format!(
+            "{name} Browser: play the video, then pick it in {name}"
+        ))
         .inner_size(1100.0, 760.0)
         .visible(visible)
         .focused(visible)
@@ -298,7 +369,11 @@ pub fn browse_close<R: Runtime>(app: AppHandle<R>) {
 /// Current Browse-window candidates.
 #[tauri::command]
 pub fn browse_hits<R: Runtime>(app: AppHandle<R>) -> Vec<Hit> {
-    app.state::<SmithFetch>().browse.lock().map(|c| c.candidates()).unwrap_or_default()
+    app.state::<SmithFetch>()
+        .browse
+        .lock()
+        .map(|c| c.candidates())
+        .unwrap_or_default()
 }
 
 /// A media request seen by a page script.
@@ -312,14 +387,33 @@ pub struct Reported {
 /// Called by the injected script in the Browse / hidden windows only (the
 /// `sniff` capability grants remote pages this one command).
 #[tauri::command]
-pub fn sniff_report<R: Runtime>(app: AppHandle<R>, webview: tauri::Webview<R>, page_url: String, hits: Vec<Reported>, drm: bool) {
+pub fn sniff_report<R: Runtime>(
+    app: AppHandle<R>,
+    webview: tauri::Webview<R>,
+    page_url: String,
+    hits: Vec<Reported>,
+    drm: bool,
+) {
     let label = webview.label().to_string();
     if label != BROWSE_LABEL && label != HIDDEN_LABEL {
         return;
     }
     for r in hits.into_iter().take(50) {
         if let Some(kind) = sniff::classify(&r.url, r.content_type.as_deref()) {
-            add_hit(&app, &label, Hit { url: r.url, kind, page_url: page_url.clone(), headers: vec![], size: None, height: 0, live: false, drm: false });
+            add_hit(
+                &app,
+                &label,
+                Hit {
+                    url: r.url,
+                    kind,
+                    page_url: page_url.clone(),
+                    headers: vec![],
+                    size: None,
+                    height: 0,
+                    live: false,
+                    drm: false,
+                },
+            );
         }
     }
     if drm {
@@ -361,7 +455,13 @@ pub(crate) fn add_hit<R: Runtime>(app: &AppHandle<R>, label: &str, hit: Hit) {
         let label = label.to_string();
         tauri::async_runtime::spawn(async move {
             let never = AtomicBool::new(false);
-            let ctx = Ctx { referer: Some(&hit.page_url).filter(|r| !r.is_empty()).map(String::as_str), headers: &hit.headers, cookie: None };
+            let ctx = Ctx {
+                referer: Some(&hit.page_url)
+                    .filter(|r| !r.is_empty())
+                    .map(String::as_str),
+                headers: &hit.headers,
+                cookie: None,
+            };
             if let Ok(text) = http::fetch_text(&hit.url, &ctx, MAX_MANIFEST_BYTES, &never).await {
                 let height = if hit.kind == HitKind::Dash {
                     sniff::dash_max_height(&text)
@@ -370,7 +470,12 @@ pub(crate) fn add_hit<R: Runtime>(app: &AppHandle<R>, label: &str, hit: Hit) {
                 };
                 let c = collector(&app, &label);
                 if let Ok(mut c) = c.lock() {
-                    c.annotate(&hit.url, sniff::manifest_drm(&text), sniff::manifest_live(&text), height);
+                    c.annotate(
+                        &hit.url,
+                        sniff::manifest_drm(&text),
+                        sniff::manifest_live(&text),
+                        height,
+                    );
                 }
                 if label == BROWSE_LABEL {
                     emit_hits(&app);
@@ -381,7 +486,12 @@ pub(crate) fn add_hit<R: Runtime>(app: &AppHandle<R>, label: &str, hit: Hit) {
 }
 
 fn emit_hits<R: Runtime>(app: &AppHandle<R>) {
-    let list = app.state::<SmithFetch>().browse.lock().map(|c| c.candidates()).unwrap_or_default();
+    let list = app
+        .state::<SmithFetch>()
+        .browse
+        .lock()
+        .map(|c| c.candidates())
+        .unwrap_or_default();
     let _ = app.emit("sniff-hits", list);
 }
 
@@ -395,7 +505,9 @@ pub async fn hidden_sniff<R: Runtime>(app: &AppHandle<R>, url: &str) -> Vec<Hit>
     if let Some(w) = app.get_webview_window(HIDDEN_LABEL) {
         let _ = w.close();
     }
-    let Ok(w) = build_window(app, HIDDEN_LABEL, url, false) else { return vec![] };
+    let Ok(w) = build_window(app, HIDDEN_LABEL, url, false) else {
+        return vec![];
+    };
     let cancel = st.fetcher.cancel.clone();
     let mut waited = 0u64;
     let mut found_at: Option<u64> = None;
@@ -405,7 +517,11 @@ pub async fn hidden_sniff<R: Runtime>(app: &AppHandle<R>, url: &str) -> Vec<Hit>
         if cancel.load(Ordering::SeqCst) {
             break;
         }
-        let have = st.hidden.lock().map(|c| !c.candidates().is_empty()).unwrap_or(false);
+        let have = st
+            .hidden
+            .lock()
+            .map(|c| !c.candidates().is_empty())
+            .unwrap_or(false);
         if have && found_at.is_none() {
             found_at = Some(waited);
         }
@@ -431,20 +547,35 @@ pub async fn hidden_sniff<R: Runtime>(app: &AppHandle<R>, url: &str) -> Vec<Hit>
 /// Returns the sites saved.
 #[tauri::command]
 pub async fn browse_save_signin<R: Runtime>(app: AppHandle<R>) -> Result<Vec<String>, String> {
-    let w = app.get_webview_window(BROWSE_LABEL).ok_or("Open the site in the browser first, then sign in.")?;
+    let w = app
+        .get_webview_window(BROWSE_LABEL)
+        .ok_or("Open the site in the browser first, then sign in.")?;
     let page = w.url().map_err(|e| e.to_string())?;
-    let host = page.host_str().ok_or("That page has no site to save.")?.to_string();
+    let host = page
+        .host_str()
+        .ok_or("That page has no site to save.")?
+        .to_string();
     let site = cookies::site_key(&host);
     // Off the main thread: on Windows, reading cookies on it can deadlock.
-    let all = tauri::async_runtime::spawn_blocking(move || w.cookies()).await.map_err(|e| e.to_string())?.map_err(|e| format!("couldn't read the browser's cookies: {e}"))?;
+    let all = tauri::async_runtime::spawn_blocking(move || w.cookies())
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| format!("couldn't read the browser's cookies: {e}"))?;
     let list: Vec<Cookie> = all
         .iter()
         .filter_map(|c| {
-            let domain = c.domain().map(str::to_string).unwrap_or_else(|| host.clone());
+            let domain = c
+                .domain()
+                .map(str::to_string)
+                .unwrap_or_else(|| host.clone());
             (cookies::site_key(&domain) == site).then(|| Cookie {
                 name: c.name().to_string(),
                 value: c.value().to_string(),
-                domain: if c.domain().is_some() && !domain.starts_with('.') && domain != host { format!(".{domain}") } else { domain },
+                domain: if c.domain().is_some() && !domain.starts_with('.') && domain != host {
+                    format!(".{domain}")
+                } else {
+                    domain
+                },
                 path: c.path().unwrap_or("/").to_string(),
                 secure: c.secure().unwrap_or(false),
                 http_only: c.http_only().unwrap_or(false),
@@ -453,9 +584,15 @@ pub async fn browse_save_signin<R: Runtime>(app: AppHandle<R>) -> Result<Vec<Str
         })
         .collect();
     if list.is_empty() {
-        return Err(format!("No sign-in was found for {site}. Sign in in the browser window first."));
+        return Err(format!(
+            "No sign-in was found for {site}. Sign in in the browser window first."
+        ));
     }
-    app.state::<SmithFetch>().fetcher.cookies.save(&list).map_err(|e| format!("couldn't save the sign-in: {e}"))
+    app.state::<SmithFetch>()
+        .fetcher
+        .cookies
+        .save(&list)
+        .map_err(|e| format!("couldn't save the sign-in: {e}"))
 }
 
 // ---------------------------------------------------------------- cookies & settings
@@ -468,13 +605,19 @@ pub fn cookies_list<R: Runtime>(app: AppHandle<R>) -> Vec<SavedSite> {
 /// Forget one saved site, or every one when `site` is omitted.
 #[tauri::command]
 pub fn cookies_forget<R: Runtime>(app: AppHandle<R>, site: Option<String>) {
-    app.state::<SmithFetch>().fetcher.cookies.forget(site.as_deref());
+    app.state::<SmithFetch>()
+        .fetcher
+        .cookies
+        .forget(site.as_deref());
 }
 
 /// Import a Netscape cookies.txt (split per site).
 #[tauri::command]
 pub fn cookies_import<R: Runtime>(app: AppHandle<R>, path: String) -> Result<Vec<String>, String> {
-    app.state::<SmithFetch>().fetcher.cookies.import(std::path::Path::new(&path))
+    app.state::<SmithFetch>()
+        .fetcher
+        .cookies
+        .import(std::path::Path::new(&path))
 }
 
 #[tauri::command]
@@ -486,7 +629,10 @@ pub fn fetch_settings_get<R: Runtime>(app: AppHandle<R>) -> SettingsView {
         browsers: ytdlp::BROWSERS
             .iter()
             .filter(|b| cfg!(target_os = "macos") || **b != "safari")
-            .map(|b| BrowserChoice { id: (*b).to_string(), unreliable: ytdlp::browser_cookies_unreliable(b) })
+            .map(|b| BrowserChoice {
+                id: (*b).to_string(),
+                unreliable: ytdlp::browser_cookies_unreliable(b),
+            })
             .collect(),
     }
 }
@@ -568,7 +714,12 @@ fn start_clipboard_watch<R: Runtime>(app: &AppHandle<R>) {
         }
         loop {
             std::thread::sleep(Duration::from_millis(1500));
-            let on = app.state::<SmithFetch>().settings.lock().map(|s| s.clipboard_watch).unwrap_or(false);
+            let on = app
+                .state::<SmithFetch>()
+                .settings
+                .lock()
+                .map(|s| s.clipboard_watch)
+                .unwrap_or(false);
             if !on {
                 break;
             }
@@ -596,19 +747,29 @@ mod windows_sniff {
     //! workers that the injected script can't see. Read-only observation.
 
     use tauri::{AppHandle, Manager, Runtime};
-    use webview2_com::Microsoft::Web::WebView2::Win32::{ICoreWebView2_2, ICoreWebView2WebResourceResponseReceivedEventArgs};
+    use webview2_com::Microsoft::Web::WebView2::Win32::{
+        ICoreWebView2WebResourceResponseReceivedEventArgs, ICoreWebView2_2,
+    };
     use webview2_com::WebResourceResponseReceivedEventHandler;
-    use windows::core::{Interface, BOOL, HSTRING, PWSTR};
+    use windows::core::{Interface, BOOL, HSTRING, PCWSTR, PWSTR};
 
     use crate::sniff::{self, Hit};
+
+    /// URL, Content-Type, replayable request headers, Content-Length.
+    type Seen = (String, Option<String>, Vec<(String, String)>, Option<u64>);
 
     /// Request headers worth replaying for the download.
     fn keep_header(name: &str) -> bool {
         let n = name.to_ascii_lowercase();
-        matches!(n.as_str(), "user-agent" | "referer" | "origin" | "authorization") || n.starts_with("x-")
+        matches!(
+            n.as_str(),
+            "user-agent" | "referer" | "origin" | "authorization"
+        ) || n.starts_with("x-")
     }
 
-    unsafe fn read(args: &ICoreWebView2WebResourceResponseReceivedEventArgs) -> windows::core::Result<Option<(String, Option<String>, Vec<(String, String)>, Option<u64>)>> {
+    unsafe fn read(
+        args: &ICoreWebView2WebResourceResponseReceivedEventArgs,
+    ) -> windows::core::Result<Option<Seen>> {
         let req = args.Request()?;
         let mut uri = PWSTR::null();
         req.Uri(&mut uri)?;
@@ -617,7 +778,13 @@ mod windows_sniff {
         let rh = resp.Headers()?;
         let get = |name: &str| -> Option<String> {
             let mut v = PWSTR::null();
-            rh.GetHeader(&HSTRING::from(name), &mut v).ok().map(|()| webview2_com::take_pwstr(v)).filter(|s| !s.is_empty())
+            {
+                let h = HSTRING::from(name);
+                rh.GetHeader(PCWSTR(h.as_ptr()), &mut v)
+            }
+            .ok()
+            .map(|()| webview2_com::take_pwstr(v))
+            .filter(|s| !s.is_empty())
         };
         let ct = get("Content-Type");
         if sniff::classify(&url, ct.as_deref()).is_none() {
@@ -644,28 +811,43 @@ mod windows_sniff {
         let app = app.clone();
         let label = label.to_string();
         let _ = w.with_webview(move |wv| unsafe {
-            let Ok(core) = wv.controller().CoreWebView2() else { return };
-            let Ok(core2) = core.cast::<ICoreWebView2_2>() else { return };
+            let Ok(core) = wv.controller().CoreWebView2() else {
+                return;
+            };
+            let Ok(core2) = core.cast::<ICoreWebView2_2>() else {
+                return;
+            };
             let app2 = app.clone();
             let label2 = label.clone();
-            let handler = WebResourceResponseReceivedEventHandler::create(Box::new(move |sender, args| {
-                let Some(args) = args else { return Ok(()) };
-                if let Ok(Some((url, ct, headers, size))) = read(&args) {
-                    let page = sender
-                        .and_then(|s| {
-                            let mut p = PWSTR::null();
-                            s.Source(&mut p).ok().map(|()| webview2_com::take_pwstr(p))
-                        })
-                        .unwrap_or_default();
-                    if let Some(kind) = sniff::classify(&url, ct.as_deref()) {
-                        let hit = Hit { url, kind, page_url: page, headers, size, height: 0, live: false, drm: false };
-                        let app3 = app2.clone();
-                        let label3 = label2.clone();
-                        let _ = app2.run_on_main_thread(move || super::add_hit(&app3, &label3, hit));
+            let handler =
+                WebResourceResponseReceivedEventHandler::create(Box::new(move |sender, args| {
+                    let Some(args) = args else { return Ok(()) };
+                    if let Ok(Some((url, ct, headers, size))) = read(&args) {
+                        let page = sender
+                            .and_then(|s| {
+                                let mut p = PWSTR::null();
+                                s.Source(&mut p).ok().map(|()| webview2_com::take_pwstr(p))
+                            })
+                            .unwrap_or_default();
+                        if let Some(kind) = sniff::classify(&url, ct.as_deref()) {
+                            let hit = Hit {
+                                url,
+                                kind,
+                                page_url: page,
+                                headers,
+                                size,
+                                height: 0,
+                                live: false,
+                                drm: false,
+                            };
+                            let app3 = app2.clone();
+                            let label3 = label2.clone();
+                            let _ = app2
+                                .run_on_main_thread(move || super::add_hit(&app3, &label3, hit));
+                        }
                     }
-                }
-                Ok(())
-            }));
+                    Ok(())
+                }));
             let mut token = std::mem::zeroed();
             let _ = core2.add_WebResourceResponseReceived(&handler, &mut token);
             let _ = app.state::<super::SmithFetch>();
@@ -679,7 +861,10 @@ mod tests {
 
     #[test]
     fn clipboard_links_only() {
-        assert_eq!(clipboard_link("  https://youtu.be/x \n").as_deref(), Some("https://youtu.be/x"));
+        assert_eq!(
+            clipboard_link("  https://youtu.be/x \n").as_deref(),
+            Some("https://youtu.be/x")
+        );
         assert_eq!(clipboard_link("hello world"), None);
         assert_eq!(clipboard_link("file:///c/x"), None);
         assert_eq!(clipboard_link("https://a.example/x y"), None);
@@ -687,11 +872,16 @@ mod tests {
 
     #[test]
     fn settings_round_trip() {
-        let s = Settings { browser_cookies: Some("firefox".into()), clipboard_watch: true };
+        let s = Settings {
+            browser_cookies: Some("firefox".into()),
+            clipboard_watch: true,
+        };
         let t = serde_json::to_string(&s).unwrap();
         assert!(t.contains("browserCookies"));
         assert_eq!(serde_json::from_str::<Settings>(&t).unwrap(), s);
-        assert_eq!(serde_json::from_str::<Settings>("{}").unwrap(), Settings::default());
-        let _ = util::DOWNLOAD_CANCELLED;
+        assert_eq!(
+            serde_json::from_str::<Settings>("{}").unwrap(),
+            Settings::default()
+        );
     }
 }

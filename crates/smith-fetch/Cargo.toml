@@ -24,8 +24,8 @@ tauri = { version = "2", optional = true }
 arboard = { version = "3", default-features = false, optional = true }
 
 [target.'cfg(windows)'.dependencies]
-webview2-com = { version = "0.38", optional = true }
-windows = { version = "0.61", optional = true, features = ["Win32_Foundation", "Win32_System_Com", "Win32_System_WinRT"] }
+webview2-com = { version = "0.39", optional = true }
+windows = { version = "0.62", optional = true, features = ["Win32_Foundation", "Win32_System_Com", "Win32_System_WinRT"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "time", "macros"] }

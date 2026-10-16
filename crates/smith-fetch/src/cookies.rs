@@ -23,14 +23,19 @@ pub struct Cookie {
 }
 
 /// Second-level labels under which registrable domains have three labels.
-const MULTI_PART_SUFFIXES: [&str; 12] = ["co", "com", "net", "org", "gov", "ac", "edu", "ne", "or", "go", "gob", "nic"];
+const MULTI_PART_SUFFIXES: [&str; 12] = [
+    "co", "com", "net", "org", "gov", "ac", "edu", "ne", "or", "go", "gob", "nic",
+];
 
 /// The site key a host belongs to: its registrable domain (`m.youtube.com`
 /// → `youtube.com`, `news.bbc.co.uk` → `bbc.co.uk`). IP literals and
 /// single-label hosts are returned as-is.
 #[must_use]
 pub fn site_key(host: &str) -> String {
-    let h = host.trim_start_matches('.').trim_end_matches('.').to_ascii_lowercase();
+    let h = host
+        .trim_start_matches('.')
+        .trim_end_matches('.')
+        .to_ascii_lowercase();
     if h.parse::<std::net::IpAddr>().is_ok() {
         return h;
     }
@@ -39,24 +44,44 @@ pub fn site_key(host: &str) -> String {
         return h;
     }
     let n = labels.len();
-    let take = if labels[n - 1].len() == 2 && MULTI_PART_SUFFIXES.contains(&labels[n - 2]) { 3 } else { 2 };
+    let take = if labels[n - 1].len() == 2 && MULTI_PART_SUFFIXES.contains(&labels[n - 2]) {
+        3
+    } else {
+        2
+    };
     labels[n.saturating_sub(take)..].join(".")
 }
 
 /// Serialise cookies as a Netscape cookies.txt (what yt-dlp `--cookies` reads).
 #[must_use]
 pub fn to_netscape(cookies: &[Cookie]) -> String {
-    let mut s = String::from("# Netscape HTTP Cookie File\n# Saved by a Smith app. Keep this file private.\n\n");
+    let mut s = String::from(
+        "# Netscape HTTP Cookie File\n# Saved by a Smith app. Keep this file private.\n\n",
+    );
     for c in cookies {
-        if c.name.contains(['\t', '\n', '\r']) || c.value.contains(['\t', '\n', '\r']) || c.domain.contains(['\t', '\n']) {
+        if c.name.contains(['\t', '\n', '\r'])
+            || c.value.contains(['\t', '\n', '\r'])
+            || c.domain.contains(['\t', '\n'])
+        {
             continue;
         }
-        let domain = if c.http_only { format!("#HttpOnly_{}", c.domain) } else { c.domain.clone() };
-        let sub = if c.domain.starts_with('.') { "TRUE" } else { "FALSE" };
+        let domain = if c.http_only {
+            format!("#HttpOnly_{}", c.domain)
+        } else {
+            c.domain.clone()
+        };
+        let sub = if c.domain.starts_with('.') {
+            "TRUE"
+        } else {
+            "FALSE"
+        };
         let path = if c.path.is_empty() { "/" } else { &c.path };
         let secure = if c.secure { "TRUE" } else { "FALSE" };
         let exp = c.expires.unwrap_or(0).max(0);
-        s.push_str(&format!("{domain}\t{sub}\t{path}\t{secure}\t{exp}\t{}\t{}\n", c.name, c.value));
+        s.push_str(&format!(
+            "{domain}\t{sub}\t{path}\t{secure}\t{exp}\t{}\t{}\n",
+            c.name, c.value
+        ));
     }
     s
 }
@@ -127,7 +152,11 @@ impl Store {
     }
 
     fn file(&self, site: &str) -> Option<PathBuf> {
-        let ok = !site.is_empty() && site.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-') && !site.starts_with('.');
+        let ok = !site.is_empty()
+            && site
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
+            && !site.starts_with('.');
         ok.then(|| self.dir.join(format!("{site}.txt")))
     }
 
@@ -139,13 +168,20 @@ impl Store {
         std::fs::create_dir_all(&self.dir)?;
         let mut by_site: std::collections::BTreeMap<String, Vec<Cookie>> = Default::default();
         for c in cookies {
-            by_site.entry(site_key(&c.domain)).or_default().push(c.clone());
+            by_site
+                .entry(site_key(&c.domain))
+                .or_default()
+                .push(c.clone());
         }
         let mut written = Vec::new();
         for (site, list) in by_site {
-            let Some(path) = self.file(&site) else { continue };
+            let Some(path) = self.file(&site) else {
+                continue;
+            };
             // Merge with what's there: newer values win by (domain, path, name).
-            let mut merged = std::fs::read_to_string(&path).map(|t| parse_netscape(&t)).unwrap_or_default();
+            let mut merged = std::fs::read_to_string(&path)
+                .map(|t| parse_netscape(&t))
+                .unwrap_or_default();
             for c in list {
                 merged.retain(|m| !(m.domain == c.domain && m.path == c.path && m.name == c.name));
                 merged.push(c);
@@ -161,12 +197,14 @@ impl Store {
     /// # Errors
     /// If the file can't be read, has no cookies, or the store can't be written.
     pub fn import(&self, path: &Path) -> Result<Vec<String>, String> {
-        let text = std::fs::read_to_string(path).map_err(|e| format!("Couldn't read that file: {e}"))?;
+        let text =
+            std::fs::read_to_string(path).map_err(|e| format!("Couldn't read that file: {e}"))?;
         let cookies = parse_netscape(&text);
         if cookies.is_empty() {
             return Err("That file has no cookies in Netscape cookies.txt format.".to_string());
         }
-        self.save(&cookies).map_err(|e| format!("Couldn't save the cookies: {e}"))
+        self.save(&cookies)
+            .map_err(|e| format!("Couldn't save the cookies: {e}"))
     }
 
     /// The cookies file for a URL's site, if one is saved.
@@ -195,7 +233,9 @@ impl Store {
                         let p = e.path();
                         let site = p.file_stem()?.to_str()?.to_string();
                         (p.extension()? == "txt").then(|| SavedSite {
-                            cookies: std::fs::read_to_string(&p).map(|t| parse_netscape(&t).len()).unwrap_or(0),
+                            cookies: std::fs::read_to_string(&p)
+                                .map(|t| parse_netscape(&t).len())
+                                .unwrap_or(0),
                             site,
                         })
                     })
@@ -238,7 +278,15 @@ mod tests {
     use super::*;
 
     fn c(name: &str, domain: &str) -> Cookie {
-        Cookie { name: name.into(), value: "v".into(), domain: domain.into(), path: "/".into(), secure: true, http_only: false, expires: Some(2_000_000_000) }
+        Cookie {
+            name: name.into(),
+            value: "v".into(),
+            domain: domain.into(),
+            path: "/".into(),
+            secure: true,
+            http_only: false,
+            expires: Some(2_000_000_000),
+        }
     }
 
     #[test]
@@ -266,7 +314,10 @@ mod tests {
     #[test]
     fn header_matches_domain_and_subdomains() {
         let list = vec![c("a", ".example.com"), c("b", "other.com")];
-        assert_eq!(header_for_host(&list, "cdn.example.com").as_deref(), Some("a=v"));
+        assert_eq!(
+            header_for_host(&list, "cdn.example.com").as_deref(),
+            Some("a=v")
+        );
         assert_eq!(header_for_host(&list, "notexample.com"), None);
     }
 
@@ -275,7 +326,13 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("smith-cookies-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let s = Store::new(dir.clone());
-        let sites = s.save(&[c("SID", ".youtube.com"), c("PREF", "m.youtube.com"), c("x", ".vimeo.com")]).unwrap();
+        let sites = s
+            .save(&[
+                c("SID", ".youtube.com"),
+                c("PREF", "m.youtube.com"),
+                c("x", ".vimeo.com"),
+            ])
+            .unwrap();
         assert_eq!(sites, ["vimeo.com", "youtube.com"]);
         let mut newer = c("SID", ".youtube.com");
         newer.value = "new".into();

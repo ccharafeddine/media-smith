@@ -10,3 +10,4 @@ serde.workspace = true
 serde_json.workspace = true
 regex.workspace = true
 url.workspace = true
+smith-fetch = { path = "../smith-fetch" }

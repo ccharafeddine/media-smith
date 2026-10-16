@@ -6,7 +6,10 @@ use std::sync::atomic::AtomicBool;
 
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 
-use crate::util::{cancelled, origin_of, BROWSER_USER_AGENT, DOWNLOAD_CANCELLED, MAX_DOWNLOAD_BYTES, UNSUPPORTED_SITE};
+use crate::util::{
+    cancelled, origin_of, BROWSER_USER_AGENT, DOWNLOAD_CANCELLED, MAX_DOWNLOAD_BYTES,
+    UNSUPPORTED_SITE,
+};
 
 /// Cap on how much page HTML the scraper reads.
 pub const MAX_HTML_BYTES: usize = 5 * 1024 * 1024;
@@ -33,10 +36,16 @@ pub fn client(ctx: &Ctx<'_>, timeout: Option<u64>) -> Result<reqwest::Client, St
     let mut h = HeaderMap::new();
     for (k, v) in ctx.headers {
         let lk = k.to_ascii_lowercase();
-        if matches!(lk.as_str(), "host" | "content-length" | "connection" | "range" | "accept-encoding") {
+        if matches!(
+            lk.as_str(),
+            "host" | "content-length" | "connection" | "range" | "accept-encoding"
+        ) {
             continue;
         }
-        if let (Ok(n), Ok(val)) = (HeaderName::from_bytes(k.as_bytes()), HeaderValue::from_str(v)) {
+        if let (Ok(n), Ok(val)) = (
+            HeaderName::from_bytes(k.as_bytes()),
+            HeaderValue::from_str(v),
+        ) {
             h.insert(n, val);
         }
     }
@@ -58,7 +67,8 @@ pub fn client(ctx: &Ctx<'_>, timeout: Option<u64>) -> Result<reqwest::Client, St
     if let Some(t) = timeout {
         b = b.timeout(std::time::Duration::from_secs(t));
     }
-    b.build().map_err(|e| format!("could not start the page fetch: {e}"))
+    b.build()
+        .map_err(|e| format!("could not start the page fetch: {e}"))
 }
 
 /// Fetch a page/manifest as text (20 s timeout, `cap` bytes; excess is
@@ -66,7 +76,12 @@ pub fn client(ctx: &Ctx<'_>, timeout: Option<u64>) -> Result<reqwest::Client, St
 ///
 /// # Errors
 /// On cancel, an unreachable host, or a non-success status.
-pub async fn fetch_text(url: &str, ctx: &Ctx<'_>, cap: usize, cancel: &AtomicBool) -> Result<String, String> {
+pub async fn fetch_text(
+    url: &str,
+    ctx: &Ctx<'_>,
+    cap: usize,
+    cancel: &AtomicBool,
+) -> Result<String, String> {
     let c = client(ctx, Some(20))?;
     let mut resp = tokio::select! {
         biased;
@@ -113,11 +128,15 @@ pub async fn fetch_to_file(
         r = c.get(url).send() => r.map_err(|_| UNREACHABLE.to_string())?,
     };
     if !resp.status().is_success() {
-        return Err(format!("the server returned {} for that link", resp.status()));
+        return Err(format!(
+            "the server returned {} for that link",
+            resp.status()
+        ));
     }
     let total = resp.content_length();
     let mut downloaded: u64 = 0;
-    let mut file = std::fs::File::create(out).map_err(|e| format!("could not save the download: {e}"))?;
+    let mut file =
+        std::fs::File::create(out).map_err(|e| format!("could not save the download: {e}"))?;
     loop {
         let chunk = tokio::select! {
             biased;
@@ -125,7 +144,8 @@ pub async fn fetch_to_file(
             chunk = resp.chunk() => chunk.map_err(|_| "the download was interrupted before it finished".to_string())?,
         };
         let Some(chunk) = chunk else { break };
-        file.write_all(&chunk).map_err(|e| format!("could not write the download: {e}"))?;
+        file.write_all(&chunk)
+            .map_err(|e| format!("could not write the download: {e}"))?;
         downloaded += chunk.len() as u64;
         if downloaded > MAX_DOWNLOAD_BYTES {
             return Err("that download is too large".to_string());

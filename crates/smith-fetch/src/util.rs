@@ -110,7 +110,10 @@ pub fn command(program: &Path) -> tokio::process::Command {
 /// The last non-empty line of `s` (a short failure summary).
 #[must_use]
 pub fn last_line(s: &str) -> &str {
-    s.lines().map(str::trim).rfind(|l| !l.is_empty()).unwrap_or("")
+    s.lines()
+        .map(str::trim)
+        .rfind(|l| !l.is_empty())
+        .unwrap_or("")
 }
 
 /// Keep only the last `max` bytes of `s` (on a char boundary).
@@ -138,18 +141,36 @@ mod tests {
 
     #[test]
     fn classifies_direct_links() {
-        assert_eq!(direct_media_extension("https://h/x.MP4").as_deref(), Some("mp4"));
-        assert_eq!(direct_media_extension("https://h/a/b.webm?t=1").as_deref(), Some("webm"));
-        assert_eq!(direct_media_extension("https://youtube.com/watch?v=x"), None);
-        assert_eq!(direct_manifest_extension("https://c/x/master.M3U8?tok=1"), Some("m3u8"));
+        assert_eq!(
+            direct_media_extension("https://h/x.MP4").as_deref(),
+            Some("mp4")
+        );
+        assert_eq!(
+            direct_media_extension("https://h/a/b.webm?t=1").as_deref(),
+            Some("webm")
+        );
+        assert_eq!(
+            direct_media_extension("https://youtube.com/watch?v=x"),
+            None
+        );
+        assert_eq!(
+            direct_manifest_extension("https://c/x/master.M3U8?tok=1"),
+            Some("m3u8")
+        );
         assert_eq!(direct_manifest_extension("https://c/m.mpd"), Some("mpd"));
         assert_eq!(direct_manifest_extension("https://c/m.mp4"), None);
     }
 
     #[test]
     fn hosts_and_origins() {
-        assert_eq!(host_of("https://www.Example.com/x").as_deref(), Some("example.com"));
-        assert_eq!(origin_of("https://a.example:8443/x/y?z").as_deref(), Some("https://a.example:8443"));
+        assert_eq!(
+            host_of("https://www.Example.com/x").as_deref(),
+            Some("example.com")
+        );
+        assert_eq!(
+            origin_of("https://a.example:8443/x/y?z").as_deref(),
+            Some("https://a.example:8443")
+        );
         assert_eq!(origin_of("not a url"), None);
         assert!(is_youtube("https://youtu.be/abc"));
         assert!(is_youtube("https://m.youtube.com/watch?v=1"));

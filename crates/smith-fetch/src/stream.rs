@@ -10,7 +10,10 @@ use tokio::io::BufReader;
 use crate::http::{self, Ctx, MAX_MANIFEST_BYTES};
 use crate::scrape;
 use crate::sniff;
-use crate::util::{self, cancelled, is_http_url, origin_of, BROWSER_USER_AGENT, DOWNLOAD_CANCELLED, MAX_DOWNLOAD_BYTES, UNSUPPORTED_SITE};
+use crate::util::{
+    self, cancelled, is_http_url, origin_of, BROWSER_USER_AGENT, DOWNLOAD_CANCELLED,
+    MAX_DOWNLOAD_BYTES, UNSUPPORTED_SITE,
+};
 
 /// Protocols ffmpeg may open: network only, so a crafted playlist can't make
 /// it read local files or spawn anything.
@@ -36,7 +39,12 @@ pub struct Inputs {
 ///
 /// # Errors
 /// On cancel or DRM.
-pub async fn resolve_inputs(url: &str, hls: bool, ctx: &Ctx<'_>, cancel: &AtomicBool) -> Result<Inputs, String> {
+pub async fn resolve_inputs(
+    url: &str,
+    hls: bool,
+    ctx: &Ctx<'_>,
+    cancel: &AtomicBool,
+) -> Result<Inputs, String> {
     match http::fetch_text(url, ctx, MAX_MANIFEST_BYTES, cancel).await {
         Ok(text) => {
             if sniff::manifest_drm(&text) {
@@ -46,7 +54,9 @@ pub async fn resolve_inputs(url: &str, hls: bool, ctx: &Ctx<'_>, cancel: &Atomic
             if hls {
                 if let Some(c) = scrape::best_hls_variant(&text, url) {
                     // A master playlist never has #EXTINF; check the variant for liveness.
-                    if let Ok(var) = http::fetch_text(&c.video, ctx, MAX_MANIFEST_BYTES, cancel).await {
+                    if let Ok(var) =
+                        http::fetch_text(&c.video, ctx, MAX_MANIFEST_BYTES, cancel).await
+                    {
                         if sniff::manifest_drm(&var) {
                             return Err(DRM_MESSAGE.to_string());
                         }
@@ -54,13 +64,25 @@ pub async fn resolve_inputs(url: &str, hls: bool, ctx: &Ctx<'_>, cancel: &Atomic
                     }
                     let mut inputs = vec![c.video];
                     inputs.extend(c.audio);
-                    return Ok(Inputs { inputs, pinned: true, live });
+                    return Ok(Inputs {
+                        inputs,
+                        pinned: true,
+                        live,
+                    });
                 }
             }
-            Ok(Inputs { inputs: vec![url.to_string()], pinned: false, live })
+            Ok(Inputs {
+                inputs: vec![url.to_string()],
+                pinned: false,
+                live,
+            })
         }
         Err(e) if e == DOWNLOAD_CANCELLED => Err(e),
-        Err(_) => Ok(Inputs { inputs: vec![url.to_string()], pinned: false, live: false }),
+        Err(_) => Ok(Inputs {
+            inputs: vec![url.to_string()],
+            pinned: false,
+            live: false,
+        }),
     }
 }
 
@@ -84,13 +106,19 @@ pub fn ffmpeg_args(s: &Inputs, ctx: &Ctx<'_>, out: &str, max_secs: Option<f64>) 
         }
         match lk.as_str() {
             "user-agent" => ua = v.clone(),
-            "referer" | "origin" | "cookie" | "host" | "range" | "content-length" | "connection" | "accept-encoding" => {}
+            "referer" | "origin" | "cookie" | "host" | "range" | "content-length"
+            | "connection" | "accept-encoding" => {}
             _ if lk.starts_with("sec-") => {}
             _ => extra.push_str(&format!("{k}: {v}\r\n")),
         }
     }
     for input in &s.inputs {
-        args.extend(["-protocol_whitelist".to_string(), STREAM_PROTOCOLS.to_string(), "-user_agent".to_string(), ua.clone()]);
+        args.extend([
+            "-protocol_whitelist".to_string(),
+            STREAM_PROTOCOLS.to_string(),
+            "-user_agent".to_string(),
+            ua.clone(),
+        ]);
         if let Some(r) = ctx.referer.filter(|r| is_http_url(r)) {
             args.extend(["-referer".to_string(), r.to_string()]);
         }
@@ -136,7 +164,10 @@ pub fn parse_duration(s: &str) -> Option<f64> {
 #[must_use]
 pub fn parse_time(s: &str) -> Option<f64> {
     let idx = s.rfind("time=")?;
-    let token: String = s[idx + 5..].chars().take_while(|c| !c.is_whitespace()).collect();
+    let token: String = s[idx + 5..]
+        .chars()
+        .take_while(|c| !c.is_whitespace())
+        .collect();
     let mut parts = token.split(':');
     let h: f64 = parts.next()?.parse().ok()?;
     let m: f64 = parts.next()?.parse().ok()?;
@@ -214,7 +245,11 @@ pub async fn run_ffmpeg(
     let ok = child.wait().await.map(|s| s.success()).unwrap_or(false);
     if !ok {
         let summary = util::last_line(&tail);
-        return fail(if summary.is_empty() { "Download failed.".to_string() } else { format!("Download failed: {summary}") });
+        return fail(if summary.is_empty() {
+            "Download failed.".to_string()
+        } else {
+            format!("Download failed: {summary}")
+        });
     }
     match std::fs::metadata(out) {
         Ok(m) if m.len() > 0 => Ok(()),
@@ -222,7 +257,10 @@ pub async fn run_ffmpeg(
     }
 }
 
-async fn read_until_cr_or_lf<R: tokio::io::AsyncBufRead + Unpin>(r: &mut R, buf: &mut Vec<u8>) -> std::io::Result<usize> {
+async fn read_until_cr_or_lf<R: tokio::io::AsyncBufRead + Unpin>(
+    r: &mut R,
+    buf: &mut Vec<u8>,
+) -> std::io::Result<usize> {
     use tokio::io::AsyncReadExt;
     let mut byte = [0u8; 1];
     let mut n = 0;
@@ -268,7 +306,11 @@ pub async fn ts_to_mp4(ffmpeg: &Path, ts: &Path) -> std::path::PathBuf {
         .await
         .map(|o| o.status.success())
         .unwrap_or(false);
-    if ok && std::fs::metadata(&mp4).map(|m| m.len() > 0).unwrap_or(false) {
+    if ok
+        && std::fs::metadata(&mp4)
+            .map(|m| m.len() > 0)
+            .unwrap_or(false)
+    {
         let _ = std::fs::remove_file(ts);
         mp4
     } else {
@@ -299,7 +341,11 @@ pub async fn download(
     if inputs.inputs.iter().any(|i| !is_http_url(i)) {
         return Err(UNSUPPORTED_SITE.to_string());
     }
-    let out = dir.join(if inputs.live { "source.ts" } else { "source.mp4" });
+    let out = dir.join(if inputs.live {
+        "source.ts"
+    } else {
+        "source.mp4"
+    });
     if inputs.live {
         status("Live stream: recording until you press Stop");
     }
@@ -318,9 +364,24 @@ mod tests {
 
     #[test]
     fn args_map_variant_audio_and_headers() {
-        let split = Inputs { inputs: vec!["https://c.example/v1080.m3u8".into(), "https://c.example/a.m3u8".into()], pinned: true, live: false };
-        let headers = vec![("Authorization".to_string(), "Bearer t".to_string()), ("Sec-Fetch-Mode".to_string(), "cors".to_string()), ("User-Agent".to_string(), "MyUA".to_string())];
-        let ctx = Ctx { referer: Some("https://page.example/w/1"), headers: &headers, cookie: Some("a=b") };
+        let split = Inputs {
+            inputs: vec![
+                "https://c.example/v1080.m3u8".into(),
+                "https://c.example/a.m3u8".into(),
+            ],
+            pinned: true,
+            live: false,
+        };
+        let headers = vec![
+            ("Authorization".to_string(), "Bearer t".to_string()),
+            ("Sec-Fetch-Mode".to_string(), "cors".to_string()),
+            ("User-Agent".to_string(), "MyUA".to_string()),
+        ];
+        let ctx = Ctx {
+            referer: Some("https://page.example/w/1"),
+            headers: &headers,
+            cookie: Some("a=b"),
+        };
         let a = ffmpeg_args(&split, &ctx, "out.mp4", None);
         let s = a.join(" ");
         assert_eq!(a.iter().filter(|x| *x == "-i").count(), 2);
@@ -336,13 +397,21 @@ mod tests {
         assert!(s.contains("+faststart"));
         assert_eq!(a.last().map(String::as_str), Some("out.mp4"));
 
-        let whole = Inputs { inputs: vec!["https://c.example/m.mpd".into()], pinned: false, live: false };
+        let whole = Inputs {
+            inputs: vec!["https://c.example/m.mpd".into()],
+            pinned: false,
+            live: false,
+        };
         let b = ffmpeg_args(&whole, &Ctx::default(), "o.mp4", Some(10.0)).join(" ");
         assert!(!b.contains("-map"));
         assert!(!b.contains("-referer"));
         assert!(b.contains("-c copy -t 10"));
 
-        let live = Inputs { inputs: vec!["https://c.example/live.m3u8".into()], pinned: true, live: true };
+        let live = Inputs {
+            inputs: vec!["https://c.example/live.m3u8".into()],
+            pinned: true,
+            live: true,
+        };
         let l = ffmpeg_args(&live, &Ctx::default(), "o.ts", None).join(" ");
         assert!(l.contains("-map 0:v:0 -map 0:a:0?"));
         assert!(l.contains("-f mpegts") && !l.contains("faststart"));

@@ -86,7 +86,11 @@ pub fn build_args(a: &Args<'_>) -> Vec<String> {
         a.template.into(),
     ];
     if a.playlist {
-        v.extend(["--yes-playlist".into(), "--playlist-items".into(), format!("1:{PLAYLIST_MAX_ITEMS}")]);
+        v.extend([
+            "--yes-playlist".into(),
+            "--playlist-items".into(),
+            format!("1:{PLAYLIST_MAX_ITEMS}"),
+        ]);
     } else {
         v.push("--no-playlist".into());
     }
@@ -147,7 +151,8 @@ pub fn browser_cookies_unreliable(b: &str) -> bool {
 /// Parse a yt-dlp progress line ("[download]  12.3% of ...") into 0.0-1.0.
 #[must_use]
 pub fn parse_percent(line: &str) -> Option<f64> {
-    if !line.contains("[download]") && !line.trim_start().starts_with(|c: char| c.is_ascii_digit()) {
+    if !line.contains("[download]") && !line.trim_start().starts_with(|c: char| c.is_ascii_digit())
+    {
         return None;
     }
     let idx = line.find('%')?;
@@ -227,25 +232,61 @@ pub fn friendly_error(stderr: &str, app: &str) -> String {
         format!("{SIGNIN_PREFIX}That video is private. If your account can see it, sign in to the site in {app} and try again.")
     } else if has(&["members-only", "members only", "join this channel"]) {
         format!("{SIGNIN_PREFIX}That video is for channel members only. If you're a member, sign in in {app} and try again.")
-    } else if has(&["confirm your age", "age-restricted", "age restricted", "inappropriate for some users"]) {
+    } else if has(&[
+        "confirm your age",
+        "age-restricted",
+        "age restricted",
+        "inappropriate for some users",
+    ]) {
         format!("{SIGNIN_PREFIX}That video is age-restricted. Sign in to the site in {app} and try again.")
     } else if needs_signin(stderr) {
         format!("{SIGNIN_PREFIX}That site wants you to sign in before it will share the video. Sign in in {app}, or pick a browser's cookies in Settings.")
-    } else if has(&["not available in your country", "made this video available in your country", "geo restrict", "geo-restrict", "blocked it in your country"]) {
+    } else if has(&[
+        "not available in your country",
+        "made this video available in your country",
+        "geo restrict",
+        "geo-restrict",
+        "blocked it in your country",
+    ]) {
         "That video isn't available in your region.".to_string()
-    } else if has(&["this live event will begin", "premieres in", "live event will begin"]) {
+    } else if has(&[
+        "this live event will begin",
+        "premieres in",
+        "live event will begin",
+    ]) {
         "That stream hasn't started yet. Try again once it's live or finished.".to_string()
-    } else if has(&["video unavailable", "has been removed", "no longer available", "does not exist", "http error 404", "http error 410"]) {
+    } else if has(&[
+        "video unavailable",
+        "has been removed",
+        "no longer available",
+        "does not exist",
+        "http error 404",
+        "http error 410",
+    ]) {
         "That video is unavailable. It may have been removed, or the link is wrong.".to_string()
-    } else if has(&["http error 429", "too many requests", "rate-limit", "rate limit"]) {
-        "The site is rate-limiting downloads right now. Wait a few minutes and try again.".to_string()
+    } else if has(&[
+        "http error 429",
+        "too many requests",
+        "rate-limit",
+        "rate limit",
+    ]) {
+        "The site is rate-limiting downloads right now. Wait a few minutes and try again."
+            .to_string()
     } else if has(&["http error 403", "forbidden"]) {
         format!("The site refused the download (HTTP 403). {app} already retried with an updated downloader; try Browse to play it in {app}.")
     } else if has(&["no space left", "disk full", "not enough space"]) {
         "Your disk is full. Free up some space and try again.".to_string()
     } else if has(&["requested format is not available"]) {
         "That video isn't offered in that format. Try \"Best available\".".to_string()
-    } else if has(&["unable to download webpage", "failed to resolve", "getaddrinfo", "connection", "timed out", "network is unreachable", "http error"]) {
+    } else if has(&[
+        "unable to download webpage",
+        "failed to resolve",
+        "getaddrinfo",
+        "connection",
+        "timed out",
+        "network is unreachable",
+        "http error",
+    ]) {
         "Couldn't reach that link. Check the URL and your connection.".to_string()
     } else {
         let summary = util::last_line(stderr);
@@ -321,7 +362,7 @@ pub async fn run(
         child.wait().await.map(|s| s.success()).unwrap_or(false)
     };
     let files = list_files(dir);
-    if !ok && !(stopped && !files.is_empty()) {
+    if !ok && (!stopped || files.is_empty()) {
         return Err(RunError::Failed(errors));
     }
     if files.is_empty() {
@@ -429,7 +470,10 @@ pub fn parse_probe(json: &str) -> Option<ProbeInfo> {
     let mut info = ProbeInfo {
         title: s("title"),
         extractor: s("extractor_key"),
-        is_live: v.get("is_live").and_then(serde_json::Value::as_bool).unwrap_or(false)
+        is_live: v
+            .get("is_live")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false)
             || s("live_status") == "is_live",
         duration: v.get("duration").and_then(serde_json::Value::as_f64),
         playlist_count: None,
@@ -445,25 +489,45 @@ pub fn parse_probe(json: &str) -> Option<ProbeInfo> {
             .get("entries")
             .and_then(|e| e.as_array())
             .map(|a| u32::try_from(a.len()).unwrap_or(u32::MAX))
-            .or_else(|| v.get("playlist_count").and_then(serde_json::Value::as_u64).map(|n| u32::try_from(n).unwrap_or(u32::MAX)));
+            .or_else(|| {
+                v.get("playlist_count")
+                    .and_then(serde_json::Value::as_u64)
+                    .map(|n| u32::try_from(n).unwrap_or(u32::MAX))
+            });
         return Some(info);
     }
-    let fmts = v.get("formats").and_then(|f| f.as_array()).cloned().unwrap_or_default();
+    let fmts = v
+        .get("formats")
+        .and_then(|f| f.as_array())
+        .cloned()
+        .unwrap_or_default();
     let mut best: std::collections::BTreeMap<u32, (f64, FormatChoice)> = Default::default();
     for f in &fmts {
         let vcodec = f.get("vcodec").and_then(|x| x.as_str()).unwrap_or("none");
-        let Some(h) = f.get("height").and_then(serde_json::Value::as_u64) else { continue };
+        let Some(h) = f.get("height").and_then(serde_json::Value::as_u64) else {
+            continue;
+        };
         if vcodec == "none" || h == 0 {
             continue;
         }
         let h = u32::try_from(h).unwrap_or(0);
         let id = f.get("format_id").and_then(|x| x.as_str()).unwrap_or("");
-        if id.is_empty() || f.get("has_drm").and_then(serde_json::Value::as_bool).unwrap_or(false) {
+        if id.is_empty()
+            || f.get("has_drm")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false)
+        {
             continue;
         }
         let acodec = f.get("acodec").and_then(|x| x.as_str()).unwrap_or("none");
-        let tbr = f.get("tbr").and_then(serde_json::Value::as_f64).unwrap_or(0.0);
-        let fps = f.get("fps").and_then(serde_json::Value::as_f64).unwrap_or(0.0);
+        let tbr = f
+            .get("tbr")
+            .and_then(serde_json::Value::as_f64)
+            .unwrap_or(0.0);
+        let fps = f
+            .get("fps")
+            .and_then(serde_json::Value::as_f64)
+            .unwrap_or(0.0);
         let ext = f.get("ext").and_then(|x| x.as_str()).unwrap_or("");
         let size = f
             .get("filesize")
@@ -482,7 +546,12 @@ pub fn parse_probe(json: &str) -> Option<ProbeInfo> {
             label.push_str(&format!(" · {} fps", fps.round()));
         }
         let score = tbr + fps;
-        let choice = FormatChoice { spec, label, height: h, filesize: size };
+        let choice = FormatChoice {
+            spec,
+            label,
+            height: h,
+            filesize: size,
+        };
         match best.get(&h) {
             Some((s, _)) if *s >= score => {}
             _ => {
@@ -490,7 +559,8 @@ pub fn parse_probe(json: &str) -> Option<ProbeInfo> {
             }
         }
     }
-    info.formats.extend(best.into_values().rev().map(|(_, c)| c));
+    info.formats
+        .extend(best.into_values().rev().map(|(_, c)| c));
     Some(info)
 }
 
@@ -499,7 +569,11 @@ mod tests {
     use super::*;
 
     fn base<'a>(url: &'a str) -> Args<'a> {
-        Args { url, template: "/tmp/source.%(ext)s", ..Default::default() }
+        Args {
+            url,
+            template: "/tmp/source.%(ext)s",
+            ..Default::default()
+        }
     }
 
     #[test]
@@ -549,28 +623,46 @@ mod tests {
         assert!(s.contains("-f 137+ba/137"));
         let mut b = base("https://v.example/p");
         b.cookies = Cookies::Browser("firefox".into());
-        assert!(build_args(&b).join(" ").contains("--cookies-from-browser firefox"));
+        assert!(build_args(&b)
+            .join(" ")
+            .contains("--cookies-from-browser firefox"));
         b.cookies = Cookies::Browser("--exec".into());
         assert!(!build_args(&b).join(" ").contains("cookies-from-browser"));
     }
 
     #[test]
     fn progress_and_playlist_lines() {
-        assert_eq!(parse_percent("[download]  12.5% of 10MiB at 1MiB/s"), Some(0.125));
+        assert_eq!(
+            parse_percent("[download]  12.5% of 10MiB at 1MiB/s"),
+            Some(0.125)
+        );
         assert_eq!(parse_percent("[download] 100% of 3MiB"), Some(1.0));
         assert_eq!(parse_percent("[youtube] abc: Downloading webpage"), None);
-        assert_eq!(parse_playlist_item("[download] Downloading item 3 of 12"), Some((3, 12)));
+        assert_eq!(
+            parse_playlist_item("[download] Downloading item 3 of 12"),
+            Some((3, 12))
+        );
         assert_eq!(parse_playlist_item("[download] 3%"), None);
     }
 
     #[test]
     fn classifies_failures() {
-        assert!(is_unsupported("ERROR: Unsupported URL: https://x.example/p"));
-        assert!(is_unsupported("ERROR: [generic] p: No video formats found!"));
-        assert!(!is_unsupported("ERROR: Unable to download webpage: HTTP Error 404"));
-        assert!(wants_impersonation("ERROR: [generic] Got HTTP Error 403 caused by Cloudflare anti-bot challenge"));
+        assert!(is_unsupported(
+            "ERROR: Unsupported URL: https://x.example/p"
+        ));
+        assert!(is_unsupported(
+            "ERROR: [generic] p: No video formats found!"
+        ));
+        assert!(!is_unsupported(
+            "ERROR: Unable to download webpage: HTTP Error 404"
+        ));
+        assert!(wants_impersonation(
+            "ERROR: [generic] Got HTTP Error 403 caused by Cloudflare anti-bot challenge"
+        ));
         assert!(!wants_impersonation("ERROR: HTTP Error 404"));
-        assert!(needs_signin("Sign in to confirm you're not a bot. Use --cookies-from-browser"));
+        assert!(needs_signin(
+            "Sign in to confirm you're not a bot. Use --cookies-from-browser"
+        ));
         assert!(!needs_signin("HTTP Error 404: Not Found"));
     }
 

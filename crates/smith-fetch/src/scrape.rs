@@ -638,7 +638,10 @@ pub fn decode_base64_blobs(html: &str) -> Vec<String> {
 
 fn brightcove_re() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
-    re(&R, r#"(?is)<video-js\b[^>]*>|<video\b[^>]*data-video-id[^>]*>"#)
+    re(
+        &R,
+        r#"(?is)<video-js\b[^>]*>|<video\b[^>]*data-video-id[^>]*>"#,
+    )
 }
 
 fn wistia_re() -> &'static Regex {
@@ -691,7 +694,6 @@ fn collect_embed_providers(html: &str, raw: &mut Vec<Raw>) {
         });
     }
 }
-
 
 fn is_junk_media(url: &str) -> bool {
     let l = url.to_ascii_lowercase();
@@ -1135,8 +1137,14 @@ https://other.example.com/v720.m3u8
             <video-js data-setup='{"sources":[{"src":"/v/hd.mp4"}]}'></video-js>"#;
         let c = extract_candidates(html, "https://site.example/watch/1");
         let u = urls(&c);
-        assert!(u.contains(&"https://site.example/media/show/master.m3u8"), "{u:?}");
-        assert!(u.contains(&"https://site.example/watch/clips/a_720p.mp4"), "{u:?}");
+        assert!(
+            u.contains(&"https://site.example/media/show/master.m3u8"),
+            "{u:?}"
+        );
+        assert!(
+            u.contains(&"https://site.example/watch/clips/a_720p.mp4"),
+            "{u:?}"
+        );
         assert!(u.contains(&"https://site.example/v/hd.mp4"), "{u:?}");
     }
 
@@ -1159,11 +1167,22 @@ https://other.example.com/v720.m3u8
             <div data-vimeo-id="76979871"></div><lite-youtube videoid="aqz-KE-bpKQ"></lite-youtube>"#;
         let c = extract_candidates(html, "https://site.example/");
         let u = urls(&c);
-        assert!(u.contains(&"https://players.brightcove.net/123/abc_default/index.html?videoId=456"), "{u:?}");
-        assert!(u.contains(&"https://fast.wistia.net/embed/iframe/ab12cd34ef"), "{u:?}");
-        assert!(u.contains(&"https://player.vimeo.com/video/76979871"), "{u:?}");
-        assert!(u.contains(&"https://www.youtube.com/watch?v=aqz-KE-bpKQ"), "{u:?}");
+        assert!(
+            u.contains(&"https://players.brightcove.net/123/abc_default/index.html?videoId=456"),
+            "{u:?}"
+        );
+        assert!(
+            u.contains(&"https://fast.wistia.net/embed/iframe/ab12cd34ef"),
+            "{u:?}"
+        );
+        assert!(
+            u.contains(&"https://player.vimeo.com/video/76979871"),
+            "{u:?}"
+        );
+        assert!(
+            u.contains(&"https://www.youtube.com/watch?v=aqz-KE-bpKQ"),
+            "{u:?}"
+        );
         assert!(c.iter().all(|x| x.kind == MediaKind::Embed));
     }
-
 }

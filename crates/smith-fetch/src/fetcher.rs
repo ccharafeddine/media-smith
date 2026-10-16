@@ -42,12 +42,16 @@ pub struct Hooks {
 impl Hooks {
     #[must_use]
     pub fn silent() -> Self {
-        Self { progress: Arc::new(|_| {}), status: Arc::new(|_| {}) }
+        Self {
+            progress: Arc::new(|_| {}),
+            status: Arc::new(|_| {}),
+        }
     }
 }
 
 /// Runs a hidden sniff pass on a page and returns the media it saw.
-pub type SniffFn = Arc<dyn Fn(String) -> Pin<Box<dyn Future<Output = Vec<Hit>> + Send>> + Send + Sync>;
+pub type SniffFn =
+    Arc<dyn Fn(String) -> Pin<Box<dyn Future<Output = Vec<Hit>> + Send>> + Send + Sync>;
 
 /// Per-download choices from the UI.
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -108,7 +112,10 @@ impl Fetcher {
     }
 
     fn ffmpeg_dir(&self) -> Option<String> {
-        self.tools.ffmpeg.parent().map(|d| d.to_string_lossy().into_owned())
+        self.tools
+            .ffmpeg
+            .parent()
+            .map(|d| d.to_string_lossy().into_owned())
     }
 
     async fn ytdlp_version(&self, exe: &Path) -> Option<String> {
@@ -171,7 +178,12 @@ impl Fetcher {
         }
         let exe = self.tools.updater.ytdlp_path();
         let deno = self.deno_for(url, &exe).await;
-        let mut args: Vec<String> = vec!["--ignore-config".into(), "-J".into(), "--socket-timeout".into(), "20".into()];
+        let mut args: Vec<String> = vec![
+            "--ignore-config".into(),
+            "-J".into(),
+            "--socket-timeout".into(),
+            "20".into(),
+        ];
         if o.playlist {
             args.extend(["--flat-playlist".into(), "--yes-playlist".into()]);
         } else {
@@ -203,15 +215,26 @@ impl Fetcher {
         let stdout = String::from_utf8_lossy(&out.stdout);
         match ytdlp::parse_probe(&stdout) {
             Some(i) if out.status.success() => Ok(i),
-            _ => Err(ytdlp::friendly_error(&String::from_utf8_lossy(&out.stderr), &self.app_name)),
+            _ => Err(ytdlp::friendly_error(
+                &String::from_utf8_lossy(&out.stderr),
+                &self.app_name,
+            )),
         }
     }
 
-    async fn ytdlp_once(&self, url: &str, o: &DownloadOptions, dir: &Path, impersonate: bool, referer: Option<&str>) -> Result<Vec<PathBuf>, RunError> {
+    async fn ytdlp_once(
+        &self,
+        url: &str,
+        o: &DownloadOptions,
+        dir: &Path,
+        impersonate: bool,
+        referer: Option<&str>,
+    ) -> Result<Vec<PathBuf>, RunError> {
         let exe = self.tools.updater.ytdlp_path();
         let deno = self.deno_for(url, &exe).await;
         let _ = std::fs::remove_dir_all(dir);
-        std::fs::create_dir_all(dir).map_err(|e| RunError::Failed(format!("could not prepare download folder: {e}")))?;
+        std::fs::create_dir_all(dir)
+            .map_err(|e| RunError::Failed(format!("could not prepare download folder: {e}")))?;
         let template = if o.playlist {
             dir.join("%(playlist_index)03d - %(title).60B.%(ext)s")
         } else {
@@ -241,7 +264,13 @@ impl Fetcher {
 
     /// yt-dlp with the retry ladder: impersonation on 403/bot walls, then a
     /// (rate-limited) yt-dlp update and one more try.
-    async fn ytdlp_with_retries(&self, url: &str, o: &DownloadOptions, dir: &Path, referer: Option<&str>) -> Result<Vec<PathBuf>, RunError> {
+    async fn ytdlp_with_retries(
+        &self,
+        url: &str,
+        o: &DownloadOptions,
+        dir: &Path,
+        referer: Option<&str>,
+    ) -> Result<Vec<PathBuf>, RunError> {
         let mut last = match self.ytdlp_once(url, o, dir, false, referer).await {
             Ok(f) => return Ok(f),
             Err(RunError::Cancelled) => return Err(RunError::Cancelled),
@@ -281,24 +310,38 @@ impl Fetcher {
     /// # Errors
     /// A user-facing message ([`DOWNLOAD_CANCELLED`] on cancel; sign-in-fixable
     /// errors start with [`util::SIGNIN_PREFIX`]).
-    pub async fn download(&self, url: &str, o: &DownloadOptions, dir: &Path) -> Result<Vec<PathBuf>, String> {
+    pub async fn download(
+        &self,
+        url: &str,
+        o: &DownloadOptions,
+        dir: &Path,
+    ) -> Result<Vec<PathBuf>, String> {
         self.cancel.store(false, Ordering::SeqCst);
         self.stop.store(false, Ordering::SeqCst);
         if !is_http_url(url) {
             return Err("Only http and https links are supported.".to_string());
         }
         let cookie = self.cookie_header(url, o);
-        let ctx = Ctx { referer: o.referer.as_deref(), headers: &o.headers, cookie: cookie.as_deref() };
+        let ctx = Ctx {
+            referer: o.referer.as_deref(),
+            headers: &o.headers,
+            cookie: cookie.as_deref(),
+        };
         if let Some(ext) = util::direct_media_extension(url) {
             return self.direct(url, &ext, &ctx, dir).await.map(|p| vec![p]);
         }
         if let Some(m) = util::direct_manifest_extension(url) {
-            return self.stream(url, m == "m3u8", &ctx, dir).await.map(|p| vec![p]);
+            return self
+                .stream(url, m == "m3u8", &ctx, dir)
+                .await
+                .map(|p| vec![p]);
         }
         match self.ytdlp_with_retries(url, o, dir, None).await {
             Ok(files) => Ok(self.finish_live(o, files).await),
             Err(RunError::Cancelled) => Err(cancelled_err()),
-            Err(RunError::Failed(e)) if ytdlp::is_unsupported(&e) && !o.no_fallback => self.fallbacks(url, o, dir).await,
+            Err(RunError::Failed(e)) if ytdlp::is_unsupported(&e) && !o.no_fallback => {
+                self.fallbacks(url, o, dir).await
+            }
             Err(RunError::Failed(e)) => Err(ytdlp::friendly_error(&e, &self.app_name)),
         }
     }
@@ -321,9 +364,16 @@ impl Fetcher {
         out
     }
 
-    async fn direct(&self, url: &str, ext: &str, ctx: &Ctx<'_>, dir: &Path) -> Result<PathBuf, String> {
+    async fn direct(
+        &self,
+        url: &str,
+        ext: &str,
+        ctx: &Ctx<'_>,
+        dir: &Path,
+    ) -> Result<PathBuf, String> {
         let _ = std::fs::remove_dir_all(dir);
-        std::fs::create_dir_all(dir).map_err(|e| format!("could not prepare download folder: {e}"))?;
+        std::fs::create_dir_all(dir)
+            .map_err(|e| format!("could not prepare download folder: {e}"))?;
         let out = dir.join(format!("source.{ext}"));
         let progress = self.hooks.progress.clone();
         match http::fetch_to_file(url, ctx, &out, &self.cancel, &*progress).await {
@@ -335,16 +385,39 @@ impl Fetcher {
         }
     }
 
-    async fn stream(&self, url: &str, hls: bool, ctx: &Ctx<'_>, dir: &Path) -> Result<PathBuf, String> {
+    async fn stream(
+        &self,
+        url: &str,
+        hls: bool,
+        ctx: &Ctx<'_>,
+        dir: &Path,
+    ) -> Result<PathBuf, String> {
         let _ = std::fs::remove_dir_all(dir);
-        std::fs::create_dir_all(dir).map_err(|e| format!("could not prepare download folder: {e}"))?;
+        std::fs::create_dir_all(dir)
+            .map_err(|e| format!("could not prepare download folder: {e}"))?;
         let progress = self.hooks.progress.clone();
         let status = self.hooks.status.clone();
-        stream::download(&self.tools.ffmpeg, url, hls, ctx, dir, &self.cancel, Some(&self.stop), &*progress, &*status).await
+        stream::download(
+            &self.tools.ffmpeg,
+            url,
+            hls,
+            ctx,
+            dir,
+            &self.cancel,
+            Some(&self.stop),
+            &*progress,
+            &*status,
+        )
+        .await
     }
 
     /// Scraper, then a hidden sniff pass.
-    async fn fallbacks(&self, url: &str, o: &DownloadOptions, dir: &Path) -> Result<Vec<PathBuf>, String> {
+    async fn fallbacks(
+        &self,
+        url: &str,
+        o: &DownloadOptions,
+        dir: &Path,
+    ) -> Result<Vec<PathBuf>, String> {
         self.status("Looking for the video on the page…");
         let scraped = self.scrape_fallback(url, o, dir).await;
         match scraped {
@@ -370,7 +443,11 @@ impl Fetcher {
                     Err(e) => last = e,
                 }
             }
-            return Err(if last.is_empty() { UNSUPPORTED_SITE.to_string() } else { last });
+            return Err(if last.is_empty() {
+                UNSUPPORTED_SITE.to_string()
+            } else {
+                last
+            });
         }
         Err(scrape_err)
     }
@@ -379,7 +456,12 @@ impl Fetcher {
     ///
     /// # Errors
     /// A user-facing message; DRM hits are refused.
-    pub async fn download_hit(&self, h: &Hit, o: &DownloadOptions, dir: &Path) -> Result<Vec<PathBuf>, String> {
+    pub async fn download_hit(
+        &self,
+        h: &Hit,
+        o: &DownloadOptions,
+        dir: &Path,
+    ) -> Result<Vec<PathBuf>, String> {
         self.cancel.store(false, Ordering::SeqCst);
         self.stop.store(false, Ordering::SeqCst);
         if h.drm {
@@ -389,8 +471,14 @@ impl Fetcher {
             return Err(UNSUPPORTED_SITE.to_string());
         }
         let referer = (!h.page_url.is_empty()).then_some(h.page_url.as_str());
-        let cookie = self.cookie_header(&h.url, o).or_else(|| referer.and_then(|r| self.cookie_header(r, o)));
-        let ctx = Ctx { referer, headers: &h.headers, cookie: cookie.as_deref() };
+        let cookie = self
+            .cookie_header(&h.url, o)
+            .or_else(|| referer.and_then(|r| self.cookie_header(r, o)));
+        let ctx = Ctx {
+            referer,
+            headers: &h.headers,
+            cookie: cookie.as_deref(),
+        };
         match h.kind {
             HitKind::Hls => self.stream(&h.url, true, &ctx, dir).await.map(|p| vec![p]),
             HitKind::Dash => self.stream(&h.url, false, &ctx, dir).await.map(|p| vec![p]),
@@ -402,10 +490,25 @@ impl Fetcher {
         }
     }
 
-    async fn try_media(&self, candidates: &[scrape::Candidate], referer: &str, o: &DownloadOptions, dir: &Path, last_err: &mut String) -> Result<Option<PathBuf>, String> {
+    async fn try_media(
+        &self,
+        candidates: &[scrape::Candidate],
+        referer: &str,
+        o: &DownloadOptions,
+        dir: &Path,
+        last_err: &mut String,
+    ) -> Result<Option<PathBuf>, String> {
         let cookie = self.cookie_header(referer, o);
-        let ctx = Ctx { referer: Some(referer), headers: &[], cookie: cookie.as_deref() };
-        for c in candidates.iter().filter(|c| c.kind != MediaKind::Embed).take(MAX_SCRAPE_ATTEMPTS) {
+        let ctx = Ctx {
+            referer: Some(referer),
+            headers: &[],
+            cookie: cookie.as_deref(),
+        };
+        for c in candidates
+            .iter()
+            .filter(|c| c.kind != MediaKind::Embed)
+            .take(MAX_SCRAPE_ATTEMPTS)
+        {
             let r = match &c.kind {
                 MediaKind::File(ext) => self.direct(&c.url, ext, &ctx, dir).await,
                 MediaKind::Hls => self.stream(&c.url, true, &ctx, dir).await,
@@ -421,27 +524,57 @@ impl Fetcher {
     }
 
     /// The generic page scraper and its embedded players.
-    async fn scrape_fallback(&self, page_url: &str, o: &DownloadOptions, dir: &Path) -> Result<PathBuf, String> {
+    async fn scrape_fallback(
+        &self,
+        page_url: &str,
+        o: &DownloadOptions,
+        dir: &Path,
+    ) -> Result<PathBuf, String> {
         let cookie = self.cookie_header(page_url, o);
-        let ctx = Ctx { referer: None, headers: &[], cookie: cookie.as_deref() };
+        let ctx = Ctx {
+            referer: None,
+            headers: &[],
+            cookie: cookie.as_deref(),
+        };
         let html = http::fetch_text(page_url, &ctx, MAX_HTML_BYTES, &self.cancel).await?;
         let candidates = scrape::extract_candidates(&html, page_url);
         let mut last_err = UNSUPPORTED_SITE.to_string();
-        if let Some(p) = self.try_media(&candidates, page_url, o, dir, &mut last_err).await? {
+        if let Some(p) = self
+            .try_media(&candidates, page_url, o, dir, &mut last_err)
+            .await?
+        {
             return Ok(p);
         }
-        let single = DownloadOptions { playlist: false, live: false, ..o.clone() };
-        for embed in candidates.iter().filter(|c| c.kind == MediaKind::Embed).take(MAX_EMBEDS) {
-            match self.ytdlp_once(&embed.url, &single, dir, false, Some(page_url)).await {
+        let single = DownloadOptions {
+            playlist: false,
+            live: false,
+            ..o.clone()
+        };
+        for embed in candidates
+            .iter()
+            .filter(|c| c.kind == MediaKind::Embed)
+            .take(MAX_EMBEDS)
+        {
+            match self
+                .ytdlp_once(&embed.url, &single, dir, false, Some(page_url))
+                .await
+            {
                 Ok(mut f) if !f.is_empty() => return Ok(f.remove(0)),
                 Ok(_) | Err(RunError::Failed(_)) => {}
                 Err(RunError::Cancelled) => return Err(cancelled_err()),
             }
-            let ectx = Ctx { referer: Some(page_url), headers: &[], cookie: None };
+            let ectx = Ctx {
+                referer: Some(page_url),
+                headers: &[],
+                cookie: None,
+            };
             match http::fetch_text(&embed.url, &ectx, MAX_HTML_BYTES, &self.cancel).await {
                 Ok(h) => {
                     let inner = scrape::extract_candidates(&h, &embed.url);
-                    if let Some(p) = self.try_media(&inner, &embed.url, o, dir, &mut last_err).await? {
+                    if let Some(p) = self
+                        .try_media(&inner, &embed.url, o, dir, &mut last_err)
+                        .await?
+                    {
                         return Ok(p);
                     }
                 }

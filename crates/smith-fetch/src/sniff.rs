@@ -71,29 +71,42 @@ pub fn classify(url: &str, content_type: Option<&str>) -> Option<HitKind> {
         return None;
     }
     let host = u.host_str().unwrap_or("").to_ascii_lowercase();
-    if AD_HOSTS.iter().any(|a| host == *a || host.ends_with(&format!(".{a}"))) {
+    if AD_HOSTS
+        .iter()
+        .any(|a| host == *a || host.ends_with(&format!(".{a}")))
+    {
         return None;
     }
     let ct = content_type.unwrap_or("").to_ascii_lowercase();
     let ct = ct.split(';').next().unwrap_or("").trim();
     match ct {
-        "application/vnd.apple.mpegurl" | "application/x-mpegurl" | "audio/mpegurl" | "audio/x-mpegurl" => {
-            return Some(HitKind::Hls)
-        }
+        "application/vnd.apple.mpegurl"
+        | "application/x-mpegurl"
+        | "audio/mpegurl"
+        | "audio/x-mpegurl" => return Some(HitKind::Hls),
         "application/dash+xml" => return Some(HitKind::Dash),
         "video/mp2t" | "video/iso.segment" => return Some(HitKind::Segment),
         _ => {}
     }
     let path = u.path().to_ascii_lowercase();
-    let ext = path.rsplit('/').next().and_then(|f| f.rsplit_once('.')).map(|(_, e)| e.to_string());
+    let ext = path
+        .rsplit('/')
+        .next()
+        .and_then(|f| f.rsplit_once('.'))
+        .map(|(_, e)| e.to_string());
     match ext.as_deref() {
         Some("m3u8") => return Some(HitKind::Hls),
         Some("mpd") => return Some(HitKind::Dash),
         Some(e) if SEGMENT_EXTS.contains(&e) => return Some(HitKind::Segment),
         _ => {}
     }
-    let ranged = u.query_pairs().any(|(k, _)| k == "range" || k == "bytestart");
-    if ct.starts_with("video/") || ct.starts_with("audio/") || ext.as_deref().is_some_and(|e| FILE_EXTS.contains(&e)) {
+    let ranged = u
+        .query_pairs()
+        .any(|(k, _)| k == "range" || k == "bytestart");
+    if ct.starts_with("video/")
+        || ct.starts_with("audio/")
+        || ext.as_deref().is_some_and(|e| FILE_EXTS.contains(&e))
+    {
         // A byte-range chunk of a progressive file is still that file.
         if ranged && host.ends_with("googlevideo.com") {
             return Some(HitKind::Segment);
@@ -165,7 +178,11 @@ const MAX_HITS: usize = 200;
 impl Collector {
     /// Add a hit; returns true when it's new and worth showing.
     pub fn add(&mut self, hit: Hit) -> bool {
-        if let Some(h) = self.hits.iter_mut().find(|h| same_resource(&h.url, &hit.url)) {
+        if let Some(h) = self
+            .hits
+            .iter_mut()
+            .find(|h| same_resource(&h.url, &hit.url))
+        {
             h.size = h.size.or(hit.size);
             h.height = h.height.max(hit.height);
             if h.headers.is_empty() {
@@ -209,7 +226,12 @@ impl Collector {
                 HitKind::Dash => 1,
                 _ => 2,
             };
-            (h.drm, kind, std::cmp::Reverse(h.height), std::cmp::Reverse(h.size.unwrap_or(0)))
+            (
+                h.drm,
+                kind,
+                std::cmp::Reverse(h.height),
+                std::cmp::Reverse(h.size.unwrap_or(0)),
+            )
         });
         v
     }
@@ -246,11 +268,17 @@ fn is_child_playlist(h: &Hit, all: &[Hit]) -> bool {
     if h.kind != HitKind::Hls {
         return false;
     }
-    let dir = |s: &str| s.rsplit_once('/').map(|(d, _)| d.to_string()).unwrap_or_default();
-    let Some(pos) = all.iter().position(|x| x.url == h.url) else { return false };
-    all[..pos]
-        .iter()
-        .any(|x| x.kind == HitKind::Hls && (dir(&x.url) == dir(&h.url) || h.url.starts_with(&dir(&x.url))))
+    let dir = |s: &str| {
+        s.rsplit_once('/')
+            .map(|(d, _)| d.to_string())
+            .unwrap_or_default()
+    };
+    let Some(pos) = all.iter().position(|x| x.url == h.url) else {
+        return false;
+    };
+    all[..pos].iter().any(|x| {
+        x.kind == HitKind::Hls && (dir(&x.url) == dir(&h.url) || h.url.starts_with(&dir(&x.url)))
+    })
 }
 
 /// Script injected into every page of the app's browse window (all
@@ -319,22 +347,52 @@ mod tests {
     use super::*;
 
     fn hit(url: &str, kind: HitKind) -> Hit {
-        Hit { url: url.into(), kind, page_url: String::new(), headers: vec![], size: None, height: 0, live: false, drm: false }
+        Hit {
+            url: url.into(),
+            kind,
+            page_url: String::new(),
+            headers: vec![],
+            size: None,
+            height: 0,
+            live: false,
+            drm: false,
+        }
     }
 
     #[test]
     fn classifies_by_type_and_extension() {
-        assert_eq!(classify("https://c/x/master.m3u8?t=1", None), Some(HitKind::Hls));
-        assert_eq!(classify("https://c/x/stream", Some("application/vnd.apple.mpegURL")), Some(HitKind::Hls));
+        assert_eq!(
+            classify("https://c/x/master.m3u8?t=1", None),
+            Some(HitKind::Hls)
+        );
+        assert_eq!(
+            classify("https://c/x/stream", Some("application/vnd.apple.mpegURL")),
+            Some(HitKind::Hls)
+        );
         assert_eq!(classify("https://c/m.mpd", None), Some(HitKind::Dash));
         assert_eq!(classify("https://c/seg-1.ts", None), Some(HitKind::Segment));
-        assert_eq!(classify("https://c/chunk-1.m4s", None), Some(HitKind::Segment));
+        assert_eq!(
+            classify("https://c/chunk-1.m4s", None),
+            Some(HitKind::Segment)
+        );
         assert_eq!(classify("https://c/v.mp4", None), Some(HitKind::File));
-        assert_eq!(classify("https://c/blob", Some("video/mp4; codecs=x")), Some(HitKind::File));
+        assert_eq!(
+            classify("https://c/blob", Some("video/mp4; codecs=x")),
+            Some(HitKind::File)
+        );
         assert_eq!(classify("https://c/page.html", Some("text/html")), None);
-        assert_eq!(classify("https://pubads.g.doubleclick.net/ad.mp4", None), None);
+        assert_eq!(
+            classify("https://pubads.g.doubleclick.net/ad.mp4", None),
+            None
+        );
         assert_eq!(classify("blob:https://x/1", None), None);
-        assert_eq!(classify("https://r1.googlevideo.com/videoplayback?range=0-100", Some("video/mp4")), Some(HitKind::Segment));
+        assert_eq!(
+            classify(
+                "https://r1.googlevideo.com/videoplayback?range=0-100",
+                Some("video/mp4")
+            ),
+            Some(HitKind::Segment)
+        );
     }
 
     #[test]
@@ -342,18 +400,29 @@ mod tests {
         assert!(manifest_drm("#EXTM3U\n#EXT-X-KEY:METHOD=SAMPLE-AES,URI=\"skd://k\",KEYFORMAT=\"com.apple.streamingkeydelivery\"\n"));
         assert!(manifest_drm("#EXTM3U\n#EXT-X-SESSION-KEY:METHOD=SAMPLE-AES-CTR,KEYFORMAT=\"urn:uuid:edef8ba9-79d6-4ace-a3c8-27dcd51d21ed\"\n"));
         assert!(manifest_drm("<MPD><AdaptationSet><ContentProtection schemeIdUri=\"urn:mpeg:dash:mp4protection:2011\"/></AdaptationSet></MPD>"));
-        assert!(!manifest_drm("#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI=\"https://k/key\"\n#EXTINF:4,\na.ts\n"));
-        assert!(!manifest_drm("#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nv.m3u8\n"));
+        assert!(!manifest_drm(
+            "#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI=\"https://k/key\"\n#EXTINF:4,\na.ts\n"
+        ));
+        assert!(!manifest_drm(
+            "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nv.m3u8\n"
+        ));
     }
 
     #[test]
     fn live_and_dash_height() {
         assert!(manifest_live("#EXTM3U\n#EXTINF:4,\na.ts\n"));
-        assert!(!manifest_live("#EXTM3U\n#EXTINF:4,\na.ts\n#EXT-X-ENDLIST\n"));
-        assert!(!manifest_live("#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nv.m3u8\n"));
+        assert!(!manifest_live(
+            "#EXTM3U\n#EXTINF:4,\na.ts\n#EXT-X-ENDLIST\n"
+        ));
+        assert!(!manifest_live(
+            "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nv.m3u8\n"
+        ));
         assert!(manifest_live("<MPD type=\"dynamic\">"));
         assert!(!manifest_live("<MPD type=\"static\">"));
-        assert_eq!(dash_max_height("<Representation height=\"720\"/><Representation height=\"1080\"/>"), 1080);
+        assert_eq!(
+            dash_max_height("<Representation height=\"720\"/><Representation height=\"1080\"/>"),
+            1080
+        );
     }
 
     #[test]
