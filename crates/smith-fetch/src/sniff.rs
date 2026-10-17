@@ -380,7 +380,7 @@ pub struct SniffFilter {
 }
 
 /// Default minimum size in MB (see the Browse settings).
-pub const DEFAULT_MIN_MB: u32 = 10;
+pub const DEFAULT_MIN_MB: u32 = 5;
 /// Media shorter than this is hidden while the filter is on (ads are 6-30 s).
 pub const MIN_SECS: f64 = 30.0;
 /// Size presets offered in the UI (MB, 0 = off).
@@ -820,6 +820,13 @@ mod tests {
         assert_eq!(off.reason(&a), None);
         assert_eq!(SniffFilter::default(), SniffFilter::from_mb(DEFAULT_MIN_MB));
         assert!(MIN_MB_PRESETS.contains(&DEFAULT_MIN_MB));
+        // 5 MB default: a real 60 s, 6.4 MB clip stays visible; ad chunks don't.
+        assert_eq!(DEFAULT_MIN_MB, 5);
+        let mut clip = hit("https://c/stock.mp4", HitKind::File);
+        clip.size = Some(6_730_486);
+        assert_eq!(SniffFilter::default().reason(&clip), None);
+        clip.size = Some(329_000);
+        assert_eq!(SniffFilter::default().reason(&clip), Some("small"));
     }
 
     #[test]
