@@ -30,13 +30,26 @@ pub const HIDDEN_LABEL: &str = "smith-sniff-hidden";
 const HIDDEN_SNIFF_SECS: u64 = 15;
 
 /// User settings for downloads (persisted as JSON in the app data folder).
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Settings {
     /// Read cookies from this browser for every download (`None` = off).
     pub browser_cookies: Option<String>,
     /// Offer to download links copied to the clipboard (default off).
     pub clipboard_watch: bool,
+    /// Browse list: hide media smaller than this many MB (and shorter than
+    /// 30 s, and ad hosts). 0 = show everything.
+    pub sniff_min_mb: u32,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            browser_cookies: None,
+            clipboard_watch: false,
+            sniff_min_mb: sniff::DEFAULT_MIN_MB,
+        }
+    }
 }
 
 /// Settings plus read-only facts for the Settings panel.
@@ -47,6 +60,8 @@ pub struct SettingsView {
     pub settings: Settings,
     pub auto_update: bool,
     pub browsers: Vec<BrowserChoice>,
+    /// Minimum-size presets for the Browse list (MB, 0 = off).
+    pub sniff_min_mb_presets: Vec<u32>,
 }
 
 /// A browser in the cookies picker.
@@ -92,6 +107,14 @@ impl SmithFetch {
         if let Ok(t) = serde_json::to_string_pretty(s) {
             let _ = std::fs::write(self.settings_path(), t);
         }
+    }
+
+    fn filter(&self) -> sniff::SniffFilter {
+        sniff::SniffFilter::from_mb(
+            self.settings
+                .lock()
+                .map_or(sniff::DEFAULT_MIN_MB, |s| s.sniff_min_mb),
+        )
     }
 
     fn options(&self, o: Option<DownloadOptions>) -> DownloadOptions {
@@ -369,10 +392,11 @@ pub fn browse_close<R: Runtime>(app: AppHandle<R>) {
 /// Current Browse-window candidates.
 #[tauri::command]
 pub fn browse_hits<R: Runtime>(app: AppHandle<R>) -> Vec<Hit> {
-    app.state::<SmithFetch>()
-        .browse
+    let st = app.state::<SmithFetch>();
+    let f = st.filter();
+    st.browse
         .lock()
-        .map(|c| c.candidates())
+        .map(|c| c.candidates_with(&f))
         .unwrap_or_default()
 }
 
@@ -400,20 +424,7 @@ pub fn sniff_report<R: Runtime>(
     }
     for r in hits.into_iter().take(50) {
         if let Some(kind) = sniff::classify(&r.url, r.content_type.as_deref()) {
-            add_hit(
-                &app,
-                &label,
-                Hit {
-                    url: r.url,
-                    kind,
-                    page_url: page_url.clone(),
-                    headers: vec![],
-                    size: None,
-                    height: 0,
-                    live: false,
-                    drm: false,
-                },
-            );
+            add_hit(&app, &label, Hit::new(r.url, kind, page_url.clone()));
         }
     }
     if drm {
@@ -440,57 +451,148 @@ fn mark_page_drm<R: Runtime>(app: &AppHandle<R>, label: &str) {
     }
 }
 
-/// Record a hit; manifests are fetched once to check DRM / live / height.
+/// Record a hit. New manifests are fetched once to check DRM / live / height
+/// and estimate size (duration × bitrate); new files without a size get a
+/// one-byte range probe. Every change re-sorts and re-emits the list.
 pub(crate) fn add_hit<R: Runtime>(app: &AppHandle<R>, label: &str, hit: Hit) {
     let c = collector(app, label);
-    let new = c.lock().map(|mut c| c.add(hit.clone())).unwrap_or(false);
-    if !new {
+    let (existed, changed) = c
+        .lock()
+        .map(|mut c| {
+            let existed = c.has(&hit.url);
+            (existed, c.add(hit.clone()))
+        })
+        .unwrap_or((true, false));
+    if !changed {
         return;
     }
     if label == BROWSE_LABEL {
         emit_hits(app);
     }
-    if matches!(hit.kind, HitKind::Hls | HitKind::Dash) {
-        let app = app.clone();
-        let label = label.to_string();
-        tauri::async_runtime::spawn(async move {
-            let never = AtomicBool::new(false);
-            let ctx = Ctx {
-                referer: Some(&hit.page_url)
-                    .filter(|r| !r.is_empty())
-                    .map(String::as_str),
-                headers: &hit.headers,
-                cookie: None,
-            };
-            if let Ok(text) = http::fetch_text(&hit.url, &ctx, MAX_MANIFEST_BYTES, &never).await {
-                let height = if hit.kind == HitKind::Dash {
-                    sniff::dash_max_height(&text)
-                } else {
-                    crate::scrape::best_hls_variant(&text, &hit.url).map_or(0, |v| v.height)
-                };
-                let c = collector(&app, &label);
-                if let Ok(mut c) = c.lock() {
-                    c.annotate(
-                        &hit.url,
-                        sniff::manifest_drm(&text),
-                        sniff::manifest_live(&text),
-                        height,
-                    );
+    if existed {
+        return;
+    }
+    let app = app.clone();
+    let label = label.to_string();
+    match hit.kind {
+        HitKind::Hls | HitKind::Dash => {
+            tauri::async_runtime::spawn(async move { inspect_manifest(&app, &label, &hit).await });
+        }
+        HitKind::File if hit.size.is_none() => {
+            tauri::async_runtime::spawn(async move {
+                let size = probe_size(&hit).await;
+                if size.is_some() {
+                    update_size(&app, &label, &hit.url, size, false, None);
                 }
-                if label == BROWSE_LABEL {
-                    emit_hits(&app);
-                }
-            }
-        });
+            });
+        }
+        _ => {}
+    }
+}
+
+fn hit_ctx(hit: &Hit) -> Ctx<'_> {
+    Ctx {
+        referer: Some(&hit.page_url)
+            .filter(|r| !r.is_empty())
+            .map(String::as_str),
+        headers: &hit.headers,
+        cookie: None,
+    }
+}
+
+fn update_size<R: Runtime>(
+    app: &AppHandle<R>,
+    label: &str,
+    url: &str,
+    size: Option<u64>,
+    estimated: bool,
+    duration: Option<f64>,
+) {
+    if let Ok(mut c) = collector(app, label).lock() {
+        c.set_size(url, size, estimated, duration);
+    }
+    if label == BROWSE_LABEL {
+        emit_hits(app);
+    }
+}
+
+/// Size of a media file from a `Range: bytes=0-0` request (Content-Range
+/// total, else Content-Length of a full response). Headers only.
+async fn probe_size(hit: &Hit) -> Option<u64> {
+    let c = http::client(&hit_ctx(hit), Some(15)).ok()?;
+    let r = c
+        .get(&hit.url)
+        .header(reqwest::header::RANGE, "bytes=0-0")
+        .send()
+        .await
+        .ok()?;
+    if !r.status().is_success() {
+        return None;
+    }
+    let total = r
+        .headers()
+        .get(reqwest::header::CONTENT_RANGE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(sniff::content_range_total);
+    if total.is_some() {
+        return total;
+    }
+    (r.status() == reqwest::StatusCode::OK)
+        .then(|| r.content_length())
+        .flatten()
+        .filter(|n| *n > 1)
+}
+
+/// Read a manifest once: DRM / live / height, then duration and an estimated
+/// size (exact for byte-range HLS).
+async fn inspect_manifest<R: Runtime>(app: &AppHandle<R>, label: &str, hit: &Hit) {
+    let never = AtomicBool::new(false);
+    let ctx = hit_ctx(hit);
+    let Ok(text) = http::fetch_text(&hit.url, &ctx, MAX_MANIFEST_BYTES, &never).await else {
+        return;
+    };
+    let live = sniff::manifest_live(&text);
+    let (height, size, estimated, duration) = if hit.kind == HitKind::Dash {
+        let d = sniff::dash_duration(&text);
+        let est = d.and_then(|d| sniff::estimate_bytes(sniff::dash_bandwidth(&text), d));
+        (sniff::dash_max_height(&text), est, true, d)
+    } else if let Some(v) = crate::scrape::best_hls_variant(&text, &hit.url) {
+        // Master playlist: the best variant's playlist has the segments.
+        let media = http::fetch_text(&v.video, &ctx, MAX_MANIFEST_BYTES, &never)
+            .await
+            .unwrap_or_default();
+        let d = sniff::hls_duration(&media);
+        match sniff::hls_byterange_total(&media) {
+            Some(exact) => (v.height, Some(exact), false, d),
+            None => (
+                v.height,
+                d.and_then(|d| sniff::estimate_bytes(v.bandwidth, d)),
+                true,
+                d,
+            ),
+        }
+    } else {
+        let d = sniff::hls_duration(&text);
+        (0, sniff::hls_byterange_total(&text), false, d)
+    };
+    if let Ok(mut c) = collector(app, label).lock() {
+        c.annotate(&hit.url, sniff::manifest_drm(&text), live, height);
+        if !live {
+            c.set_size(&hit.url, size, estimated, duration);
+        }
+    }
+    if label == BROWSE_LABEL {
+        emit_hits(app);
     }
 }
 
 fn emit_hits<R: Runtime>(app: &AppHandle<R>) {
-    let list = app
-        .state::<SmithFetch>()
+    let st = app.state::<SmithFetch>();
+    let f = st.filter();
+    let list = st
         .browse
         .lock()
-        .map(|c| c.candidates())
+        .map(|c| c.candidates_with(&f))
         .unwrap_or_default();
     let _ = app.emit("sniff-hits", list);
 }
@@ -534,7 +636,12 @@ pub async fn hidden_sniff<R: Runtime>(app: &AppHandle<R>, url: &str) -> Vec<Hit>
     // Let manifest annotation (DRM check) finish.
     tokio::time::sleep(Duration::from_millis(1500)).await;
     let c = st.hidden.lock().map(|c| c.clone()).unwrap_or_default();
-    let mut v = c.candidates();
+    let mut v = c.candidates_with(&st.filter());
+    // Prefer what the filter keeps; fall back to everything (unknown sizes
+    // are never hidden, so this only drops ads and small/short clips).
+    if v.iter().any(|h| !h.hidden) {
+        v.retain(|h| !h.hidden);
+    }
     if c.page_drm {
         for h in &mut v {
             h.drm = true;
@@ -634,6 +741,7 @@ pub fn fetch_settings_get<R: Runtime>(app: AppHandle<R>) -> SettingsView {
                 unreliable: ytdlp::browser_cookies_unreliable(b),
             })
             .collect(),
+        sniff_min_mb_presets: sniff::MIN_MB_PRESETS.to_vec(),
     }
 }
 
@@ -645,6 +753,8 @@ pub struct SettingsPatch {
     pub browser_cookies: Option<String>,
     pub clipboard_watch: Option<bool>,
     pub auto_update: Option<bool>,
+    /// Browse-list minimum size in MB (0 = off).
+    pub sniff_min_mb: Option<u32>,
 }
 
 #[tauri::command]
@@ -659,7 +769,13 @@ pub fn fetch_settings_set<R: Runtime>(app: AppHandle<R>, patch: SettingsPatch) -
             s.clipboard_watch = c;
             start_clip = c;
         }
+        if let Some(m) = patch.sniff_min_mb {
+            s.sniff_min_mb = m.min(100_000);
+        }
         st.save_settings(&s);
+    }
+    if patch.sniff_min_mb.is_some() {
+        emit_hits(&app);
     }
     if let Some(a) = patch.auto_update {
         st.fetcher.tools.updater.set_auto_update(a);
@@ -790,7 +906,16 @@ mod windows_sniff {
         if sniff::classify(&url, ct.as_deref()).is_none() {
             return Ok(None);
         }
-        let size = get("Content-Length").and_then(|s| s.parse().ok());
+        // A ranged (206) response's Content-Length is the chunk; Content-Range
+        // carries the file total. A manifest's length says nothing about the
+        // video, so streams get their size from the manifest instead.
+        let size = match sniff::classify(&url, ct.as_deref()) {
+            Some(sniff::HitKind::Hls | sniff::HitKind::Dash) => None,
+            _ => get("Content-Range")
+                .as_deref()
+                .and_then(sniff::content_range_total)
+                .or_else(|| get("Content-Length").and_then(|s| s.parse().ok())),
+        };
         let mut headers = Vec::new();
         let it = req.Headers()?.GetIterator()?;
         let mut has = BOOL(0);
@@ -830,16 +955,9 @@ mod windows_sniff {
                             })
                             .unwrap_or_default();
                         if let Some(kind) = sniff::classify(&url, ct.as_deref()) {
-                            let hit = Hit {
-                                url,
-                                kind,
-                                page_url: page,
-                                headers,
-                                size,
-                                height: 0,
-                                live: false,
-                                drm: false,
-                            };
+                            let mut hit = Hit::new(url, kind, page);
+                            hit.headers = headers;
+                            hit.size = size;
                             let app3 = app2.clone();
                             let label3 = label2.clone();
                             let _ = app2
@@ -875,6 +993,7 @@ mod tests {
         let s = Settings {
             browser_cookies: Some("firefox".into()),
             clipboard_watch: true,
+            sniff_min_mb: 50,
         };
         let t = serde_json::to_string(&s).unwrap();
         assert!(t.contains("browserCookies"));
@@ -883,5 +1002,8 @@ mod tests {
             serde_json::from_str::<Settings>("{}").unwrap(),
             Settings::default()
         );
+        // Settings files saved before the size filter get the default.
+        let old: Settings = serde_json::from_str(r#"{"clipboardWatch":true}"#).unwrap();
+        assert_eq!(old.sniff_min_mb, sniff::DEFAULT_MIN_MB);
     }
 }
