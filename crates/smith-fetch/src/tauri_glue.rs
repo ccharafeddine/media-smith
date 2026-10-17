@@ -914,7 +914,15 @@ mod windows_sniff {
             _ => get("Content-Range")
                 .as_deref()
                 .and_then(sniff::content_range_total)
-                .or_else(|| get("Content-Length").and_then(|s| s.parse().ok())),
+                .or_else(|| {
+                    // Only a full 200 response's length is the file size; a
+                    // 206 chunk or a redirect body is not (a probe fills it in).
+                    let mut status = 0i32;
+                    let _ = resp.StatusCode(&mut status);
+                    (status == 200)
+                        .then(|| get("Content-Length").and_then(|s| s.parse().ok()))
+                        .flatten()
+                }),
         };
         let mut headers = Vec::new();
         let it = req.Headers()?.GetIterator()?;

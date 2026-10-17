@@ -91,7 +91,7 @@ const FILE_EXTS: [&str; 6] = ["mp4", "webm", "mov", "m4v", "mkv", "mp3"];
 
 /// Hosts whose media requests are ads/trackers, never the video you want.
 /// Their media is kept but marked `likely_ad` (and hidden by default).
-const AD_HOSTS: [&str; 22] = [
+const AD_HOSTS: [&str; 23] = [
     "doubleclick.net",
     "googlesyndication.com",
     "googleadservices.com",
@@ -114,6 +114,8 @@ const AD_HOSTS: [&str; 22] = [
     "rubiconproject.com",
     "smartadserver.com",
     "yieldmo.com",
+    // Google's ad-media CDN (IMA video ads are served from *.gvt1.com).
+    "gvt1.com",
 ];
 
 /// Whether `url` is served from a known ad / tracker host.
@@ -702,6 +704,7 @@ mod tests {
         assert!(is_ad_host("https://pubads.g.doubleclick.net/ad.mp4"));
         assert!(is_ad_host("https://imasdk.googleapis.com/js/x.mp4"));
         assert!(!is_ad_host("https://notdoubleclick.net/v.mp4"));
+        assert!(is_ad_host("https://rr4---sn-x.gvt1.com/m/file/file.mp4"));
         assert_eq!(classify("blob:https://x/1", None), None);
         assert_eq!(
             classify(
