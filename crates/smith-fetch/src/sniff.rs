@@ -471,7 +471,7 @@ impl Collector {
         {
             // A ranged response reports a chunk; the largest seen (or the
             // Content-Range total) is the best size we have.
-            let grew = hit.size.is_some_and(|s| h.size.map_or(true, |o| s > o));
+            let grew = hit.size.is_some_and(|s| h.size.is_none_or(|o| s > o));
             if grew {
                 h.size = hit.size;
                 h.estimated = false;
